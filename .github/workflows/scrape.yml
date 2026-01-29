@@ -1,0 +1,59 @@
+name: Hourly News Scraper
+
+on:
+  schedule:
+    # 每小時執行一次（UTC 時間）
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    # 允許手動觸發
+    inputs:
+      source:
+        description: 'News source to scrape'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - hk01
+          - hkfp
+
+env:
+  TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+  TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run HK01 scraper
+        if: ${{ github.event.inputs.source == 'all' || github.event.inputs.source == 'hk01' || github.event_name == 'schedule' }}
+        run: npm run scrape:hk01:save
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+
+      # - name: Run HKFP scraper
+      #   if: ${{ github.event.inputs.source == 'all' || github.event.inputs.source == 'hkfp' || github.event_name == 'schedule' }}
+      #   run: npm run scrape:hkfp:save
+      #   env:
+      #     TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+      #     TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+
+      - name: Log completion
+        run: |
+          echo "Scraping completed at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "Source: ${{ github.event.inputs.source || 'scheduled' }}"

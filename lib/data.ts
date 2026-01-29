@@ -1,42 +1,212 @@
-import { NewsItem, NewsSource, NewsCategory } from "../types";
+import { db } from './db';
+import { NewsItem, NewsCategory, NewsSource, CATEGORY_MAP, SOURCE_MAP, DBArticle } from '../types';
 
-const SOURCES: NewsSource[] = ['明報', '東方日報', 'HK01', '信報', 'SCMP'];
-const CATEGORIES: NewsCategory[] = ['港聞', '財經', '國際', '體育', '娛樂'];
+// 將資料庫記錄轉換為 NewsItem
+function dbToNewsItem(row: DBArticle): NewsItem {
+  const sourceCode = row.source_code || 'hk01';
+  const categoryCode = row.category_code || 'local';
 
-const TITLES = [
-  "特首發表施政報告 重點關注房屋供應",
-  "恒指大升500點 科技股領漲",
-  "強颱風逼近 天文台考慮改發八號風球",
-  "西九龍文化區新展覽開幕 吸引數千遊客",
-  "啟德體育園即將竣工 迎接全運會",
-  "財政預算案公佈 派發消費券細節",
-  "地鐵新線通車 首日運作暢順",
-  "美聯儲暗示減息 環球股市造好",
-  "本地初創企業獲巨額融資",
-  "國際電影節開幕 本地導演獲獎"
-];
-
-function randomDate(start: Date, end: Date) {
-  return new Date(start.getTime() + Math.random() * (end.getTime() - start.getTime()));
+  return {
+    id: String(row.id),
+    title: row.title,
+    url: row.original_url,
+    source: (SOURCE_MAP[sourceCode] || 'HK01') as NewsSource,
+    category: (CATEGORY_MAP[categoryCode] || '港聞') as NewsCategory,
+    publishedAt: row.published_at,
+    thumbnail: row.thumbnail_url,
+    summary: row.summary || '',
+    author: row.author || undefined,
+    tags: row.tags ? JSON.parse(row.tags) : undefined,
+  };
 }
 
-export const generateNews = (count: number): NewsItem[] => {
-  return Array.from({ length: count }).map((_, i) => {
-    const isHero = i < 3;
-    const date = randomDate(new Date(Date.now() - 24 * 60 * 60 * 1000), new Date());
-    
-    return {
-      id: `news-${i}`,
-      title: TITLES[Math.floor(Math.random() * TITLES.length)] + (Math.random() > 0.5 ? "：專家分析後續影響" : "，市民表示歡迎"),
-      url: "#",
-      source: SOURCES[Math.floor(Math.random() * SOURCES.length)],
-      category: CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)],
-      publishedAt: date.toISOString(),
-      thumbnail: `https://picsum.photos/800/600?random=${i}`,
-      summary: "這是一則關於香港最新發展的新聞摘要。報導詳細分析了事件的起因、經過以及對市民日常生活的潛在影響。專家呼籲各界保持關注。",
-      views: Math.floor(Math.random() * 10000),
-    };
-  }).sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
-};
+// 獲取最新新聞
+export async function fetchLatestNews(limit: number = 50): Promise<NewsItem[]> {
+  const result = await db.execute({
+    sql: `
+      SELECT
+        a.*,
+        ms.code as source_code,
+        ms.name_zh as source_name,
+        c.code as category_code,
+        c.name_zh as category_name
+      FROM articles a
+      LEFT JOIN media_sources ms ON a.media_source_id = ms.id
+      LEFT JOIN categories c ON a.category_id = c.id
+      ORDER BY a.published_at DESC
+      LIMIT ?
+    `,
+    args: [limit],
+  });
 
-export const MOCK_NEWS = generateNews(50);
+  return result.rows.map((row) => dbToNewsItem(row as unknown as DBArticle));
+}
+
+// 按分類獲取新聞
+export async function fetchNewsByCategory(
+  category: string,
+  limit: number = 20
+): Promise<NewsItem[]> {
+  const result = await db.execute({
+    sql: `
+      SELECT
+        a.*,
+        ms.code as source_code,
+        ms.name_zh as source_name,
+        c.code as category_code,
+        c.name_zh as category_name
+      FROM articles a
+      LEFT JOIN media_sources ms ON a.media_source_id = ms.id
+      LEFT JOIN categories c ON a.category_id = c.id
+      WHERE c.code = ?
+      ORDER BY a.published_at DESC
+      LIMIT ?
+    `,
+    args: [category, limit],
+  });
+
+  return result.rows.map((row) => dbToNewsItem(row as unknown as DBArticle));
+}
+
+// 按日期獲取新聞
+export async function fetchNewsByDate(date: string): Promise<NewsItem[]> {
+  const result = await db.execute({
+    sql: `
+      SELECT
+        a.*,
+        ms.code as source_code,
+        ms.name_zh as source_name,
+        c.code as category_code,
+        c.name_zh as category_name
+      FROM articles a
+      LEFT JOIN media_sources ms ON a.media_source_id = ms.id
+      LEFT JOIN categories c ON a.category_id = c.id
+      WHERE date(a.published_at) = date(?)
+      ORDER BY a.published_at DESC
+    `,
+    args: [date],
+  });
+
+  return result.rows.map((row) => dbToNewsItem(row as unknown as DBArticle));
+}
+
+// 獲取每日統計
+export async function fetchDailyStats(days: number = 7): Promise<{ date: string; count: number }[]> {
+  const result = await db.execute({
+    sql: `
+      SELECT
+        date(published_at) as date,
+        COUNT(*) as count
+      FROM articles
+      WHERE published_at >= datetime('now', ?)
+      GROUP BY date(published_at)
+      ORDER BY date DESC
+    `,
+    args: [`-${days} days`],
+  });
+
+  return result.rows.map((row) => ({
+    date: row.date as string,
+    count: row.count as number,
+  }));
+}
+
+// 獲取統計資料
+export async function fetchStats(): Promise<{
+  totalArticles: number;
+  todayArticles: number;
+  sources: { name: string; count: number }[];
+  categories: { name: string; count: number }[];
+}> {
+  const [total, today, sources, categories] = await Promise.all([
+    db.execute('SELECT COUNT(*) as count FROM articles'),
+    db.execute(`
+      SELECT COUNT(*) as count FROM articles
+      WHERE date(published_at) = date('now')
+    `),
+    db.execute(`
+      SELECT ms.name_zh as name, COUNT(a.id) as count
+      FROM articles a
+      JOIN media_sources ms ON a.media_source_id = ms.id
+      GROUP BY ms.id
+      ORDER BY count DESC
+    `),
+    db.execute(`
+      SELECT c.name_zh as name, COUNT(a.id) as count
+      FROM articles a
+      LEFT JOIN categories c ON a.category_id = c.id
+      GROUP BY c.id
+      ORDER BY count DESC
+    `),
+  ]);
+
+  return {
+    totalArticles: total.rows[0].count as number,
+    todayArticles: today.rows[0].count as number,
+    sources: sources.rows.map((r) => ({ name: r.name as string, count: r.count as number })),
+    categories: categories.rows.map((r) => ({
+      name: (r.name as string) || '未分類',
+      count: r.count as number,
+    })),
+  };
+}
+
+// 搜尋新聞
+export async function searchNews(query: string, limit: number = 20): Promise<NewsItem[]> {
+  const result = await db.execute({
+    sql: `
+      SELECT
+        a.*,
+        ms.code as source_code,
+        ms.name_zh as source_name,
+        c.code as category_code,
+        c.name_zh as category_name
+      FROM articles a
+      LEFT JOIN media_sources ms ON a.media_source_id = ms.id
+      LEFT JOIN categories c ON a.category_id = c.id
+      WHERE a.title LIKE ? OR a.summary LIKE ?
+      ORDER BY a.published_at DESC
+      LIMIT ?
+    `,
+    args: [`%${query}%`, `%${query}%`, limit],
+  });
+
+  return result.rows.map((row) => dbToNewsItem(row as unknown as DBArticle));
+}
+
+// 獲取所有日期（用於歸檔頁面）
+export async function fetchAllDates(): Promise<string[]> {
+  const result = await db.execute(`
+    SELECT DISTINCT date(published_at) as date
+    FROM articles
+    ORDER BY date DESC
+  `);
+
+  return result.rows.map((row) => row.date as string);
+}
+
+// 按媒體來源獲取新聞
+export async function fetchNewsBySource(
+  sourceCode: string,
+  limit: number = 20
+): Promise<NewsItem[]> {
+  const result = await db.execute({
+    sql: `
+      SELECT
+        a.*,
+        ms.code as source_code,
+        ms.name_zh as source_name,
+        c.code as category_code,
+        c.name_zh as category_name
+      FROM articles a
+      LEFT JOIN media_sources ms ON a.media_source_id = ms.id
+      LEFT JOIN categories c ON a.category_id = c.id
+      WHERE ms.code = ?
+      ORDER BY a.published_at DESC
+      LIMIT ?
+    `,
+    args: [sourceCode, limit],
+  });
+
+  return result.rows.map((row) => dbToNewsItem(row as unknown as DBArticle));
+}

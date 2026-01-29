@@ -6,21 +6,30 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "db:init": "tsx lib/init-db.ts",
+    "scrape": "tsx scrapers/index.ts",
+    "scrape:all": "tsx scrapers/index.ts all",
+    "scrape:hk01": "tsx scrapers/hk01.ts",
+    "scrape:hk01:save": "tsx scrapers/hk01.ts --save",
+    "scrape:hk01:backfill": "tsx scrapers/backfill-hk01.ts"
   },
   "dependencies": {
+    "@libsql/client": "^0.17.0",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.1.0",
+    "lucide-react": "^0.563.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "lucide-react": "^0.563.0",
-    "date-fns": "^4.1.0",
     "react-router-dom": "^7.13.0",
     "recharts": "^3.7.0",
-    "clsx": "^2.1.1",
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "dotenv": "^17.2.3",
+    "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }
