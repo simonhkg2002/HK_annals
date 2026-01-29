@@ -2,15 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { fetchNewsByDate } from '../lib/data';
 import { NewsCard } from '../components/NewsCard';
 import { Button, Input, Card } from '../components/ui/primitives';
-import { Calendar as CalendarIcon, Filter, Search, Loader2 } from 'lucide-react';
-import { format, parseISO } from 'date-fns';
+import { Calendar as CalendarIcon, Filter, Search, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { format, parseISO, addDays, subDays } from 'date-fns';
 import { zhHK } from 'date-fns/locale';
 import { NewsItem } from '../types';
 
+// 資料庫最早日期（2026年開始）
+const MIN_DATE = '2026-01-01';
+
 export const DailyArchive: React.FC = () => {
-  const [selectedDate, setSelectedDate] = useState<string>(
-    new Date().toISOString().split('T')[0]
-  );
+  const today = new Date().toISOString().split('T')[0];
+  const [selectedDate, setSelectedDate] = useState<string>(today);
   const [news, setNews] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -34,12 +36,13 @@ export const DailyArchive: React.FC = () => {
   const groupedNews = news.reduce(
     (acc, item) => {
       const date = new Date(item.publishedAt);
+      const hour = date.getHours();
       const timeLabel = format(date, 'aa h:00', { locale: zhHK });
-      if (!acc[timeLabel]) acc[timeLabel] = [];
-      acc[timeLabel].push(item);
+      if (!acc[timeLabel]) acc[timeLabel] = { items: [], hour };
+      acc[timeLabel].items.push(item);
       return acc;
     },
-    {} as Record<string, NewsItem[]>
+    {} as Record<string, { items: NewsItem[]; hour: number }>
   );
 
   // 解析日期顯示
@@ -51,6 +54,26 @@ export const DailyArchive: React.FC = () => {
 
   // 獲取唯一的媒體來源
   const sources = [...new Set(news.map((n) => n.source))];
+
+  // 前一天/後一天
+  const goToPrevDay = () => {
+    const prevDay = subDays(dateObj, 1);
+    const prevDayStr = format(prevDay, 'yyyy-MM-dd');
+    if (prevDayStr >= MIN_DATE) {
+      setSelectedDate(prevDayStr);
+    }
+  };
+
+  const goToNextDay = () => {
+    const nextDay = addDays(dateObj, 1);
+    const nextDayStr = format(nextDay, 'yyyy-MM-dd');
+    if (nextDayStr <= today) {
+      setSelectedDate(nextDayStr);
+    }
+  };
+
+  const canGoPrev = selectedDate > MIN_DATE;
+  const canGoNext = selectedDate < today;
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -70,15 +93,45 @@ export const DailyArchive: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* 前一天 */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={goToPrevDay}
+            disabled={!canGoPrev}
+            className="px-2"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+
+          {/* 日期選擇器 */}
           <div className="relative">
             <CalendarIcon className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               type="date"
               value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
+              min={MIN_DATE}
+              max={today}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val >= MIN_DATE && val <= today) {
+                  setSelectedDate(val);
+                }
+              }}
               className="pl-9 w-[180px]"
             />
           </div>
+
+          {/* 後一天 */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={goToNextDay}
+            disabled={!canGoNext}
+            className="px-2"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
         </div>
       </div>
 
@@ -91,17 +144,13 @@ export const DailyArchive: React.FC = () => {
             </div>
           ) : Object.keys(groupedNews).length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
-              此日期暫無新聞記錄
+              <p>此日期暫無新聞記錄</p>
+              <p className="text-sm mt-2">資料從 2026 年 1 月開始收集</p>
             </div>
           ) : (
             Object.entries(groupedNews)
-              .sort(([a], [b]) => {
-                // 按時間倒序排列
-                const timeA = a.includes('下午') ? 12 : 0;
-                const timeB = b.includes('下午') ? 12 : 0;
-                return timeB - timeA;
-              })
-              .map(([time, items]) => (
+              .sort(([, a], [, b]) => b.hour - a.hour)
+              .map(([time, { items }]) => (
                 <div key={time} className="relative pl-8 border-l border-border/50">
                   <div className="absolute -left-3 top-0 bg-background border rounded-full px-2 py-1 text-xs font-bold text-muted-foreground">
                     {time}
@@ -116,11 +165,6 @@ export const DailyArchive: React.FC = () => {
                   </div>
                 </div>
               ))
-          )}
-          {!loading && news.length > 0 && (
-            <div className="pt-8 text-center">
-              <Button>載入更多歷史記錄</Button>
-            </div>
           )}
         </div>
 
@@ -157,6 +201,12 @@ export const DailyArchive: React.FC = () => {
               <Button className="w-full mt-4 bg-brand-blue hover:bg-brand-blue/90">
                 套用篩選
               </Button>
+            </div>
+
+            {/* 日期範圍提示 */}
+            <div className="mt-4 pt-4 border-t text-xs text-muted-foreground">
+              <p>資料範圍：2026-01-01 至今</p>
+              <p>每小時自動更新</p>
             </div>
           </Card>
         </div>

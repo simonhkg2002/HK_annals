@@ -7,10 +7,14 @@ import { NewsItem, NewsCategory } from '../types';
 import { cn } from '../lib/utils';
 import { Loader2 } from 'lucide-react';
 
+const ITEMS_PER_PAGE = 12;
+
 export const Home: React.FC = () => {
   const [activeCategory, setActiveCategory] = useState<NewsCategory | '全部'>('全部');
   const [news, setNews] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [displayCount, setDisplayCount] = useState(ITEMS_PER_PAGE);
   const [stats, setStats] = useState<{
     totalArticles: number;
     todayArticles: number;
@@ -19,7 +23,6 @@ export const Home: React.FC = () => {
 
   const categories: (NewsCategory | '全部')[] = ['全部', '港聞', '社會', '政治', '財經', '國際'];
 
-  // 分類代碼對應
   const categoryCodeMap: Record<string, string> = {
     '港聞': 'local',
     '社會': 'society',
@@ -35,13 +38,14 @@ export const Home: React.FC = () => {
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
+      setDisplayCount(ITEMS_PER_PAGE);
       try {
         if (activeCategory === '全部') {
-          const data = await fetchLatestNews(20);
+          const data = await fetchLatestNews(100);
           setNews(data);
         } else {
           const code = categoryCodeMap[activeCategory] || 'local';
-          const data = await fetchNewsByCategory(code, 20);
+          const data = await fetchNewsByCategory(code, 100);
           setNews(data);
         }
       } catch (error) {
@@ -67,8 +71,18 @@ export const Home: React.FC = () => {
     loadStats();
   }, []);
 
+  // 載入更多
+  const handleLoadMore = () => {
+    setLoadingMore(true);
+    setTimeout(() => {
+      setDisplayCount((prev) => prev + ITEMS_PER_PAGE);
+      setLoadingMore(false);
+    }, 300);
+  };
+
   const heroNews = news.slice(0, 3);
-  const gridNews = news.slice(3, 11);
+  const gridNews = news.slice(3, displayCount + 3);
+  const hasMore = news.length > displayCount + 3;
 
   const lastUpdate = new Date().toLocaleTimeString('zh-HK', {
     hour: '2-digit',
@@ -140,11 +154,34 @@ export const Home: React.FC = () => {
               </div>
             )}
 
-            <div className="mt-12 text-center">
-              <Button variant="outline" size="lg" className="min-w-[200px]">
-                載入更多
-              </Button>
-            </div>
+            {/* Load more */}
+            {!loading && hasMore && (
+              <div className="mt-12 text-center">
+                <Button
+                  variant="outline"
+                  size="lg"
+                  className="min-w-[200px]"
+                  onClick={handleLoadMore}
+                  disabled={loadingMore}
+                >
+                  {loadingMore ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      載入中...
+                    </>
+                  ) : (
+                    '載入更多'
+                  )}
+                </Button>
+              </div>
+            )}
+
+            {/* No more */}
+            {!loading && !hasMore && gridNews.length > 0 && (
+              <div className="mt-12 text-center text-sm text-muted-foreground">
+                已顯示全部 {news.length} 則新聞
+              </div>
+            )}
           </div>
         </>
       )}
