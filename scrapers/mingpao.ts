@@ -1,6 +1,6 @@
 /**
- * HK01 港聞爬蟲
- * API: https://web-data.api.hk01.com/v2/feed/zone/1
+ * 明報港聞爬蟲
+ * RSS: https://news.mingpao.com/rss/ins/s00001.xml
  */
 
 import { db } from './db';
@@ -10,49 +10,15 @@ import {
   checkDuplicate,
   generateClusterId,
   type ArticleForDedup,
-  type DuplicateCheckResult,
 } from '../lib/dedup';
 
-// HK01 API 回應類型
-interface HK01Article {
-  articleId: number;
-  title: string;
-  description: string;
-  publishUrl: string;
-  canonicalUrl: string;
-  publishTime: number;
-  lastModifyTime: number;
-  authors: Array<{ publishName: string }>;
-  mainCategory: string;
-  mainCategoryId: number;
-  zone: {
-    zoneId: number;
-    name: string;
-    publishName: string;
-  };
-  mainImage?: {
-    cdnUrl: string;
-    caption?: string;
-    width?: number;
-    height?: number;
-  };
-  tags?: Array<{ tagId: number; tagName: string }>;
-  imageCount?: number;
-  videoCount?: number;
-  contentType?: string;
-  isFeatured?: boolean;
-  isSponsored?: boolean;
-}
-
-interface HK01ApiResponse {
-  items: Array<{
-    id: number;
-    type: number;
-    labels?: string[];
-    data: HK01Article;
-  }>;
-  nextOffset?: number;
-}
+// 明報 RSS 分類
+const MINGPAO_RSS = {
+  local: 'https://news.mingpao.com/rss/ins/s00001.xml',      // 港聞
+  china: 'https://news.mingpao.com/rss/ins/s00002.xml',      // 兩岸
+  international: 'https://news.mingpao.com/rss/ins/s00003.xml', // 國際
+  economy: 'https://news.mingpao.com/rss/ins/s00004.xml',    // 經濟
+};
 
 // 轉換為資料庫格式
 interface ArticleInsert {
@@ -71,61 +37,121 @@ interface ArticleInsert {
   language: string;
   is_headline: number;
   importance_score: number;
-  // 去重欄位
   content_hash: string | null;
   title_normalized: string;
   cluster_id: string | null;
 }
 
-// 分類對應
-const categoryMapping: Record<string, string> = {
-  '港聞': 'local',
-  '社會新聞': 'society',
-  '政情': 'politics',
-  '突發': 'society',
-  '熱爆話題': 'society',
-  '01觀點': 'opinion',
-  '經濟': 'economy',
-  '財經': 'economy',
-  '中國': 'china',
-  '國際': 'international',
-  '娛樂': 'entertainment',
-  '體育': 'sports',
-};
+interface ParsedArticle {
+  id: string;
+  url: string;
+  title: string;
+  description: string;
+  publishedAt: string;
+  imageUrl: string | null;
+  category: string | null;
+}
 
-async function getCategoryId(categoryName: string): Promise<number | null> {
-  const code = categoryMapping[categoryName] || 'local';
+/**
+ * 解析 RSS XML
+ */
+function parseRSS(xml: string): ParsedArticle[] {
+  const articles: ParsedArticle[] = [];
+
+  // 匹配每個 item
+  const itemPattern = /<item>([\s\S]*?)<\/item>/g;
+  let match;
+
+  while ((match = itemPattern.exec(xml)) !== null) {
+    const itemXml = match[1];
+
+    // 提取標題
+    const titleMatch = itemXml.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/);
+    const title = titleMatch ? titleMatch[1].trim() : '';
+
+    // 提取描述
+    const descMatch = itemXml.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/);
+    const description = descMatch ? descMatch[1].trim() : '';
+
+    // 提取連結
+    const linkMatch = itemXml.match(/<link><!\[CDATA\[(.*?)\]\]><\/link>/);
+    const url = linkMatch ? linkMatch[1].trim() : '';
+
+    // 提取 GUID 作為 ID
+    const guidMatch = itemXml.match(/<guid[^>]*><!\[CDATA\[(.*?)\]\]><\/guid>/);
+    const guid = guidMatch ? guidMatch[1] : url;
+
+    // 從 URL 提取文章 ID（時間戳 - 13位數字）
+    // URL 格式: /article/20260129/s00001/1769693389407/...
+    const idMatch = url.match(/\/(\d{13})\//);
+    const id = idMatch ? idMatch[1] : String(Date.now());
+
+    // 提取發布日期
+    const pubDateMatch = itemXml.match(/<pubDate>(.*?)<\/pubDate>/);
+    let publishedAt = new Date().toISOString();
+    if (pubDateMatch) {
+      const date = new Date(pubDateMatch[1]);
+      if (!isNaN(date.getTime())) {
+        publishedAt = date.toISOString();
+      }
+    }
+
+    // 提取分類
+    const categoryMatch = itemXml.match(/<category><!\[CDATA\[(.*?)\]\]><\/category>/);
+    const category = categoryMatch ? categoryMatch[1] : null;
+
+    // 提取圖片
+    const imageMatch = itemXml.match(/url="([^"]+\.(jpg|jpeg|png|gif|webp))"/i);
+    const imageUrl = imageMatch ? imageMatch[1] : null;
+
+    if (title && url) {
+      articles.push({
+        id,
+        url,
+        title,
+        description,
+        publishedAt,
+        imageUrl,
+        category,
+      });
+    }
+  }
+
+  return articles;
+}
+
+async function getCategoryId(): Promise<number | null> {
   const result = await db.execute({
     sql: 'SELECT id FROM categories WHERE code = ?',
-    args: [code],
+    args: ['local'],
   });
   return result.rows.length > 0 ? (result.rows[0].id as number) : null;
 }
 
 async function getMediaSourceId(): Promise<number> {
   const result = await db.execute({
-    sql: "SELECT id FROM media_sources WHERE code = 'hk01'",
+    sql: "SELECT id FROM media_sources WHERE code = 'mingpao'",
     args: [],
   });
   if (result.rows.length === 0) {
-    throw new Error('HK01 media source not found');
+    throw new Error('Ming Pao media source not found');
   }
   return result.rows[0].id as number;
 }
 
-export async function fetchHK01News(
-  zoneId: number = 1, // 1 = 港聞
-  limit: number = 20,
-  offset: number = 0
-): Promise<HK01ApiResponse> {
-  const url = `https://web-data.api.hk01.com/v2/feed/zone/${zoneId}?offset=${offset}&limit=${limit}`;
+/**
+ * 抓取明報 RSS
+ */
+export async function fetchMingPaoRSS(
+  category: keyof typeof MINGPAO_RSS = 'local'
+): Promise<string> {
+  const url = MINGPAO_RSS[category];
 
   console.log(`📡 Fetching: ${url}`);
 
   const response = await fetch(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      Accept: 'application/json',
     },
   });
 
@@ -133,72 +159,64 @@ export async function fetchHK01News(
     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
   }
 
-  return response.json();
+  return response.text();
 }
 
-export async function scrapeHK01(options: {
+export async function scrapeMingPao(options: {
   limit?: number;
   saveToDb?: boolean;
 } = {}): Promise<ArticleInsert[]> {
-  const { limit = 20, saveToDb = false } = options;
+  const { limit = 30, saveToDb = false } = options;
 
-  console.log('🚀 Starting HK01 scraper...');
-  console.log(`   Zone: 港聞 (1)`);
+  console.log('🚀 Starting Ming Pao scraper...');
+  console.log(`   Category: 港聞 (local)`);
   console.log(`   Limit: ${limit}`);
   console.log(`   Save to DB: ${saveToDb}`);
   console.log('');
 
-  const response = await fetchHK01News(1, limit, 0);
-  const articles: ArticleInsert[] = [];
+  const xml = await fetchMingPaoRSS('local');
+  const parsedArticles = parseRSS(xml).slice(0, limit);
 
+  console.log(`📊 Parsed ${parsedArticles.length} articles from RSS`);
+
+  const articles: ArticleInsert[] = [];
   let mediaSourceId: number | null = null;
+  let categoryId: number | null = null;
+
   if (saveToDb) {
     mediaSourceId = await getMediaSourceId();
+    categoryId = await getCategoryId();
   }
 
-  for (const item of response.items) {
-    const data = item.data;
-
-    // 過濾贊助內容
-    if (data.isSponsored) {
-      console.log(`   ⏭️  Skipping sponsored: ${data.title.substring(0, 30)}...`);
-      continue;
-    }
-
-    const categoryId = saveToDb ? await getCategoryId(data.mainCategory) : null;
-
+  for (const parsed of parsedArticles) {
     // 生成去重用的 hash 和正規化標題
-    const contentForHash = data.title + (data.description || '');
+    const contentForHash = parsed.title + parsed.description;
     const contentHash = generateContentHash(contentForHash);
-    const titleNormalized = normalizeTitle(data.title);
+    const titleNormalized = normalizeTitle(parsed.title);
 
     const article: ArticleInsert = {
-      media_source_id: mediaSourceId || 1,
-      original_id: String(data.articleId),
-      original_url: data.canonicalUrl || data.publishUrl,
-      title: data.title,
-      content: null, // 需要額外抓取文章內容
-      summary: data.description || '',
-      published_at: new Date(data.publishTime * 1000).toISOString(),
-      updated_at: data.lastModifyTime
-        ? new Date(data.lastModifyTime * 1000).toISOString()
-        : null,
+      media_source_id: mediaSourceId || 5, // Ming Pao 的 ID
+      original_id: parsed.id,
+      original_url: parsed.url,
+      title: parsed.title,
+      content: null,
+      summary: parsed.description,
+      published_at: parsed.publishedAt,
+      updated_at: null,
       category_id: categoryId,
-      tags: JSON.stringify(data.tags?.map((t) => t.tagName) || []),
-      thumbnail_url: data.mainImage?.cdnUrl || null,
-      author: data.authors?.[0]?.publishName || null,
+      tags: JSON.stringify(parsed.category ? [parsed.category] : []),
+      thumbnail_url: parsed.imageUrl,
+      author: '明報',
       language: 'zh',
-      is_headline: data.isFeatured ? 1 : 0,
-      importance_score: data.isFeatured ? 80 : 50,
-      // 去重欄位
+      is_headline: parsed.category === '編輯推介' ? 1 : 0,
+      importance_score: parsed.category === '編輯推介' ? 70 : 50,
       content_hash: contentHash,
       title_normalized: titleNormalized,
-      cluster_id: null, // 稍後根據相似度判斷
+      cluster_id: null,
     };
 
     articles.push(article);
-
-    console.log(`   ✓ ${data.title.substring(0, 50)}...`);
+    console.log(`   ✓ ${parsed.title.substring(0, 50)}...`);
   }
 
   console.log('');
@@ -231,13 +249,13 @@ export async function scrapeHK01(options: {
     let skipped = 0;
     let clustered = 0;
 
-    for (const article of articles) {
-      // 使用 60% 相似度閾值
-      const SIMILARITY_THRESHOLD = {
-        titleSimilarity: 0.6,    // 標題相似度 >= 60% 視為相似
-        contentSimilarity: 0.5,  // 內容相似度 >= 50% 視為相似
-      };
+    // 使用 60% 相似度閾值
+    const SIMILARITY_THRESHOLD = {
+      titleSimilarity: 0.6,
+      contentSimilarity: 0.5,
+    };
 
+    for (const article of articles) {
       // 檢查是否重複
       const dupCheck = checkDuplicate(
         {
@@ -261,18 +279,16 @@ export async function scrapeHK01(options: {
         continue;
       }
 
-      // 如果標題相似度 >= 60%，歸入同一群組但仍儲存
+      // 如果標題相似度 >= 60%，歸入同一群組
       if (dupCheck.matchType === 'similar_title' || dupCheck.matchType === 'similar_content') {
         if (dupCheck.clusterId) {
           article.cluster_id = dupCheck.clusterId;
           clustered++;
           console.log(`   🔗 Linked to cluster (${(dupCheck.similarityScore * 100).toFixed(0)}% similar): ${article.title.substring(0, 40)}...`);
         } else if (dupCheck.matchedArticleId) {
-          // 為相似文章創建新群組
           const newClusterId = generateClusterId();
           article.cluster_id = newClusterId;
 
-          // 創建群組並更新原文章
           await db.execute({
             sql: `INSERT INTO news_clusters (id, main_article_id, title, article_count, first_seen_at)
                   VALUES (?, ?, ?, 2, datetime('now'))`,
@@ -321,7 +337,6 @@ export async function scrapeHK01(options: {
         });
         inserted++;
 
-        // 更新群組計數
         if (article.cluster_id) {
           await db.execute({
             sql: 'UPDATE news_clusters SET article_count = article_count + 1, last_updated_at = datetime("now") WHERE id = ?',
@@ -329,7 +344,6 @@ export async function scrapeHK01(options: {
           });
         }
 
-        // 添加到現有文章列表（供後續文章比對）
         existingArticles.push({
           id: article.original_id,
           title: article.title,
@@ -355,43 +369,17 @@ export async function scrapeHK01(options: {
   return articles;
 }
 
-// 測試用：只輸出 JSON
+// 測試用
 export async function testFetch(): Promise<void> {
-  console.log('🧪 Test mode - Fetching HK01 news...\n');
+  console.log('🧪 Test mode - Fetching Ming Pao RSS...\n');
 
-  const response = await fetchHK01News(1, 10, 0);
+  const xml = await fetchMingPaoRSS('local');
+  const articles = parseRSS(xml).slice(0, 10);
 
   console.log('='.repeat(60));
-  console.log('RAW API RESPONSE STRUCTURE:');
+  console.log('PARSED ARTICLES:');
   console.log('='.repeat(60));
-
-  // 顯示第一篇的完整結構
-  if (response.items.length > 0) {
-    const firstItem = response.items[0];
-    console.log('\n📰 First article (full structure):');
-    console.log(JSON.stringify(firstItem, null, 2));
-  }
-
-  console.log('\n' + '='.repeat(60));
-  console.log('PROCESSED ARTICLES:');
-  console.log('='.repeat(60));
-
-  const articles = response.items
-    .filter((item) => !item.data.isSponsored)
-    .map((item) => ({
-      id: item.data.articleId,
-      title: item.data.title,
-      category: item.data.mainCategory,
-      author: item.data.authors?.[0]?.publishName,
-      publishTime: new Date(item.data.publishTime * 1000).toISOString(),
-      url: item.data.canonicalUrl,
-      thumbnail: item.data.mainImage?.cdnUrl,
-      tags: item.data.tags?.map((t) => t.tagName),
-      description: item.data.description?.substring(0, 100) + '...',
-    }));
-
   console.log(JSON.stringify(articles, null, 2));
-
   console.log('\n' + '='.repeat(60));
   console.log(`Total: ${articles.length} articles`);
   console.log('='.repeat(60));
@@ -400,7 +388,7 @@ export async function testFetch(): Promise<void> {
 // 直接執行
 const args = process.argv.slice(2);
 if (args.includes('--save')) {
-  scrapeHK01({ limit: 20, saveToDb: true }).catch(console.error);
+  scrapeMingPao({ limit: 30, saveToDb: true }).catch(console.error);
 } else {
   testFetch().catch(console.error);
 }

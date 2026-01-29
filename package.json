@@ -12,7 +12,12 @@
     "scrape:all": "tsx scrapers/index.ts all",
     "scrape:hk01": "tsx scrapers/hk01.ts",
     "scrape:hk01:save": "tsx scrapers/hk01.ts --save",
-    "scrape:hk01:backfill": "tsx scrapers/backfill-hk01.ts"
+    "scrape:hk01:backfill": "tsx scrapers/backfill-hk01.ts",
+    "scrape:rthk": "tsx scrapers/rthk.ts",
+    "scrape:rthk:save": "tsx scrapers/rthk.ts --save",
+    "scrape:mingpao": "tsx scrapers/mingpao.ts",
+    "scrape:mingpao:save": "tsx scrapers/mingpao.ts --save",
+    "db:migrate:dedup": "tsx lib/migrate-dedup.ts"
   },
   "dependencies": {
     "@libsql/client": "^0.17.0",

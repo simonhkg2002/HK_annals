@@ -15,7 +15,8 @@ on:
         options:
           - all
           - hk01
-          - hkfp
+          - rthk
+          - mingpao
 
 env:
   TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
@@ -46,12 +47,19 @@ jobs:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
 
-      # - name: Run HKFP scraper
-      #   if: ${{ github.event.inputs.source == 'all' || github.event.inputs.source == 'hkfp' || github.event_name == 'schedule' }}
-      #   run: npm run scrape:hkfp:save
-      #   env:
-      #     TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
-      #     TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+      - name: Run RTHK scraper
+        if: ${{ github.event.inputs.source == 'all' || github.event.inputs.source == 'rthk' || github.event_name == 'schedule' }}
+        run: npm run scrape:rthk:save
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+
+      - name: Run Ming Pao scraper
+        if: ${{ github.event.inputs.source == 'all' || github.event.inputs.source == 'mingpao' || github.event_name == 'schedule' }}
+        run: npm run scrape:mingpao:save
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
 
       - name: Log completion
         run: |

@@ -1,5 +1,5 @@
 // 媒體來源（可動態擴展）
-export type NewsSource = 'HK01' | 'HKFP' | 'RTHK' | 'SCMP' | '明報' | '東方日報' | '信報' | '獨立媒體';
+export type NewsSource = 'HK01' | 'HKFP' | 'RTHK' | 'SCMP' | 'HKTV' | '明報' | '東方日報' | '信報' | '獨立媒體';
 
 // 新聞分類
 export type NewsCategory = '港聞' | '社會' | '政治' | '財經' | '國際' | '中國' | '體育' | '娛樂' | '生活' | '觀點';
@@ -24,6 +24,7 @@ export const SOURCE_MAP: Record<string, NewsSource> = {
   hkfp: 'HKFP',
   rthk: 'RTHK',
   scmp: 'SCMP',
+  hktv: 'HKTV',
   mingpao: '明報',
   inmediahk: '獨立媒體',
 };

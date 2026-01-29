@@ -10,13 +10,16 @@ interface HeroCarouselProps {
 
 export const HeroCarousel: React.FC<HeroCarouselProps> = ({ news }) => {
   const [current, setCurrent] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
 
   useEffect(() => {
+    if (isPaused) return;
+
     const timer = setInterval(() => {
       setCurrent((prev) => (prev + 1) % news.length);
-    }, 5000);
+    }, 7000);
     return () => clearInterval(timer);
-  }, [news.length]);
+  }, [news.length, isPaused]);
 
   const next = () => setCurrent((prev) => (prev + 1) % news.length);
   const prev = () => setCurrent((prev) => (prev - 1 + news.length) % news.length);
@@ -24,7 +27,11 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({ news }) => {
   if (!news.length) return null;
 
   return (
-    <div className="relative w-full h-[60vh] md:h-[70vh] overflow-hidden bg-black group">
+    <div
+      className="relative w-full h-[60vh] md:h-[70vh] overflow-hidden bg-black group"
+      onMouseEnter={() => setIsPaused(true)}
+      onMouseLeave={() => setIsPaused(false)}
+    >
       {news.map((item, index) => (
         <div
           key={item.id}

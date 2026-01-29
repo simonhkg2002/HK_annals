@@ -35,4 +35,6 @@ export const sourceColors: Record<string, string> = {
   'HK01': 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-100',
   '信報': 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100',
   'SCMP': 'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-100',
+  'RTHK': 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100',
+  'HKTV': 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-100',
 };

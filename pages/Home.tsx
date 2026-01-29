@@ -80,9 +80,9 @@ export const Home: React.FC = () => {
     }, 300);
   };
 
-  const heroNews = news.slice(0, 3);
-  const gridNews = news.slice(3, displayCount + 3);
-  const hasMore = news.length > displayCount + 3;
+  const heroNews = news.slice(0, 7);
+  const gridNews = news.slice(7, displayCount + 7);
+  const hasMore = news.length > displayCount + 7;
 
   const lastUpdate = new Date().toLocaleTimeString('zh-HK', {
     hour: '2-digit',
