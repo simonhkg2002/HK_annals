@@ -7,8 +7,8 @@ import { format, parseISO, addDays, subDays } from 'date-fns';
 import { zhHK } from 'date-fns/locale';
 import { NewsItem } from '../types';
 
-// 資料庫最早日期（2026年開始）
-const MIN_DATE = '2026-01-01';
+// 資料庫最早日期
+const MIN_DATE = '2026-01-29';
 
 export const DailyArchive: React.FC = () => {
   const today = new Date().toISOString().split('T')[0];
@@ -145,7 +145,7 @@ export const DailyArchive: React.FC = () => {
           ) : Object.keys(groupedNews).length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               <p>此日期暫無新聞記錄</p>
-              <p className="text-sm mt-2">資料從 2026 年 1 月開始收集</p>
+              <p className="text-sm mt-2">資料從 2026 年 1 月 29 日開始收集</p>
             </div>
           ) : (
             (Object.entries(groupedNews) as [string, { items: NewsItem[]; hour: number }][])
@@ -205,7 +205,7 @@ export const DailyArchive: React.FC = () => {
 
             {/* 日期範圍提示 */}
             <div className="mt-4 pt-4 border-t text-xs text-muted-foreground">
-              <p>資料範圍：2026-01-01 至今</p>
+              <p>資料範圍：2026-01-29 至今</p>
               <p>每小時自動更新</p>
             </div>
           </Card>

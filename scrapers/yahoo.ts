@@ -175,12 +175,16 @@ function decodeHtmlEntities(text: string): string {
 function extractImageUrl(contentEncoded: string | undefined): string | null {
   if (!contentEncoded) return null;
 
+  // Yahoo RSS 的圖片 URL 格式: https://s.yimg.com/os/creatr-uploaded-images/...
+  const yimgMatch = contentEncoded.match(/https:\/\/s\.yimg\.com\/[^\s<>"]+/);
+  if (yimgMatch) return yimgMatch[0];
+
   // 嘗試提取 img src
   const imgMatch = contentEncoded.match(/src=["']([^"']+)["']/);
   if (imgMatch) return imgMatch[1];
 
-  // 嘗試提取直接 URL
-  const urlMatch = contentEncoded.match(/https?:\/\/[^\s<>"]+\.(jpg|jpeg|png|webp)/i);
+  // 嘗試提取帶副檔名的 URL
+  const urlMatch = contentEncoded.match(/https?:\/\/[^\s<>"]+\.(jpg|jpeg|png|webp|gif)/i);
   if (urlMatch) return urlMatch[0];
 
   return null;

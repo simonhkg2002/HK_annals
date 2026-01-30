@@ -12,6 +12,7 @@ const ITEMS_PER_PAGE = 12;
 export const Home: React.FC = () => {
   const [activeCategory, setActiveCategory] = useState<NewsCategory | '全部'>('全部');
   const [news, setNews] = useState<NewsItem[]>([]);
+  const [allNews, setAllNews] = useState<NewsItem[]>([]); // 未過濾的新聞（用於 Banner）
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [displayCount, setDisplayCount] = useState(ITEMS_PER_PAGE);
@@ -40,6 +41,10 @@ export const Home: React.FC = () => {
       setLoading(true);
       setDisplayCount(ITEMS_PER_PAGE);
       try {
+        // 獲取未過濾的新聞用於 Banner（確保各來源都有）
+        const allData = await fetchLatestNews(100);
+        setAllNews(allData);
+
         if (activeCategory === '全部') {
           // 使用過濾版本，自動過濾 >65% 相似的新聞
           const data = await fetchLatestNewsFiltered(100);
@@ -81,10 +86,10 @@ export const Home: React.FC = () => {
     }, 300);
   };
 
-  // 取得 Banner 新聞（各來源最新的新聞，供 HeroCarousel 按報章分組）
+  // 取得 Banner 新聞（使用未過濾的新聞，確保各來源都有）
   const getHeroNews = () => {
-    // 傳送足夠的新聞給 HeroCarousel，讓它按報章分組
-    return [...news]
+    // 使用 allNews（未過濾），確保 HK01、Yahoo、明報、RTHK 各來源都有新聞
+    return [...allNews]
       .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
       .slice(0, 50);
   };
@@ -125,7 +130,7 @@ export const Home: React.FC = () => {
 
   return (
     <div className="animate-in fade-in duration-500">
-      {loading && news.length === 0 ? (
+      {loading && allNews.length === 0 ? (
         <div className="flex items-center justify-center min-h-[400px]">
           <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
         </div>

@@ -12,10 +12,28 @@ const MEDIA_SOURCES = [
     code: 'hk01',
     name: '香港01',
     shortName: 'HK01',
-    color: 'bg-blue-600',
+    color: 'bg-indigo-600',
     logo: '01',
     description: '香港數碼媒體',
     website: 'https://www.hk01.com',
+  },
+  {
+    code: 'yahoo',
+    name: 'Yahoo新聞',
+    shortName: 'Yahoo',
+    color: 'bg-violet-600',
+    logo: 'Y!',
+    description: '國際新聞聚合平台',
+    website: 'https://hk.news.yahoo.com',
+  },
+  {
+    code: 'mingpao',
+    name: '明報',
+    shortName: '明報',
+    color: 'bg-blue-600',
+    logo: '明',
+    description: '香港傳統報章媒體',
+    website: 'https://news.mingpao.com',
   },
   {
     code: 'rthk',
@@ -25,15 +43,6 @@ const MEDIA_SOURCES = [
     logo: 'RTHK',
     description: '香港公共廣播機構',
     website: 'https://news.rthk.hk',
-  },
-  {
-    code: 'mingpao',
-    name: '明報',
-    shortName: '明報',
-    color: 'bg-sky-600',
-    logo: '明',
-    description: '香港傳統報章媒體',
-    website: 'https://news.mingpao.com',
   },
 ];
 
@@ -129,7 +138,7 @@ export const MediaPage: React.FC = () => {
               總計 {totalCount} 則新聞
             </span>
             <span className="bg-background px-3 py-1 rounded-full border shadow-sm">
-              資料起始：2026-01-01
+              資料起始：2026-01-29
             </span>
             <a
               href={currentSource.website}
@@ -159,7 +168,7 @@ export const MediaPage: React.FC = () => {
           <div className="text-center py-12">
             <p className="text-muted-foreground mb-2">暫無此媒體的新聞</p>
             <p className="text-sm text-muted-foreground">
-              {currentSource.shortName} 的資料將從 2026-01-01 開始收集
+              {currentSource.shortName} 的資料將從 2026-01-29 開始收集
             </p>
           </div>
         )}
