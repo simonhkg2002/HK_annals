@@ -4,10 +4,18 @@ import { Menu, Search, Sun, Moon, Shield, X, Newspaper, GitBranch } from 'lucide
 import { Button, Input } from './ui/primitives';
 import { cn } from '../lib/utils';
 
-export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+interface LayoutProps {
+  children: React.ReactNode;
+  hideFooter?: boolean;
+}
+
+export const Layout: React.FC<LayoutProps> = ({ children, hideFooter }) => {
   const [isDark, setIsDark] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const location = useLocation();
+
+  // 某些頁面自動隱藏 footer
+  const shouldHideFooter = hideFooter || location.pathname === '/series';
 
   const toggleTheme = () => {
     setIsDark(!isDark);
@@ -125,34 +133,36 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
       </main>
 
       {/* Footer */}
-      <footer className="border-t py-8 md:py-12 bg-muted/30">
-        <div className="container mx-auto px-4 text-center md:text-left">
-           <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-              <div>
-                 <h4 className="font-serif font-bold text-lg mb-4">HK Chronicle</h4>
-                 <p className="text-sm text-muted-foreground">記錄香港每一天。</p>
-              </div>
-              <div>
-                  <h4 className="font-bold mb-4">分類</h4>
-                  <ul className="space-y-2 text-sm text-muted-foreground">
-                      <li>港聞</li>
-                      <li>財經</li>
-                      <li>國際</li>
-                  </ul>
-              </div>
-               <div>
-                  <h4 className="font-bold mb-4">連結</h4>
-                  <ul className="space-y-2 text-sm text-muted-foreground">
-                      <li>關於我們</li>
-                      <li>私隱政策</li>
-                  </ul>
-              </div>
-           </div>
-           <div className="mt-8 pt-8 border-t text-center text-xs text-muted-foreground">
-              © 2026 HK Daily Chronicle. All rights reserved.
-           </div>
-        </div>
-      </footer>
+      {!shouldHideFooter && (
+        <footer className="border-t py-8 md:py-12 bg-muted/30">
+          <div className="container mx-auto px-4 text-center md:text-left">
+             <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+                <div>
+                   <h4 className="font-serif font-bold text-lg mb-4">HK Chronicle</h4>
+                   <p className="text-sm text-muted-foreground">記錄香港每一天。</p>
+                </div>
+                <div>
+                    <h4 className="font-bold mb-4">分類</h4>
+                    <ul className="space-y-2 text-sm text-muted-foreground">
+                        <li>港聞</li>
+                        <li>財經</li>
+                        <li>國際</li>
+                    </ul>
+                </div>
+                 <div>
+                    <h4 className="font-bold mb-4">連結</h4>
+                    <ul className="space-y-2 text-sm text-muted-foreground">
+                        <li>關於我們</li>
+                        <li>私隱政策</li>
+                    </ul>
+                </div>
+             </div>
+             <div className="mt-8 pt-8 border-t text-center text-xs text-muted-foreground">
+                © 2026 HK Daily Chronicle. All rights reserved.
+             </div>
+          </div>
+        </footer>
+      )}
     </div>
   );
 };

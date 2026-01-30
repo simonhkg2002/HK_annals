@@ -150,11 +150,20 @@ export const SeriesBoard: React.FC = () => {
     setOffset({ x: 0, y: 0 });
   };
 
-  // 滾輪縮放
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? -0.1 : 0.1;
-    setScale(prev => Math.max(0.3, Math.min(2, prev + delta)));
+  // 滾輪縮放 - 使用 ref 來添加 passive: false 的事件監聽
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      setScale(prev => Math.max(0.3, Math.min(2, prev + delta)));
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    return () => container.removeEventListener('wheel', handleWheel);
   }, []);
 
   const selectedSeries = series.find(s => s.id === selectedSeriesId);
@@ -193,7 +202,7 @@ export const SeriesBoard: React.FC = () => {
   }
 
   return (
-    <div className="h-[calc(100vh-4rem)] flex flex-col">
+    <div className="h-[calc(100vh-4rem)] flex flex-col overflow-hidden">
       {/* 頂部工具列 */}
       <div className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-4 py-3">
         <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -247,7 +256,7 @@ export const SeriesBoard: React.FC = () => {
       {/* 偵查板區域 */}
       <div
         ref={containerRef}
-        className="flex-1 overflow-hidden relative"
+        className="flex-1 overflow-hidden relative touch-none"
         style={{
           background: `
             linear-gradient(rgba(139, 90, 43, 0.03) 1px, transparent 1px),
@@ -260,7 +269,6 @@ export const SeriesBoard: React.FC = () => {
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        onWheel={handleWheel}
       >
         {/* 軟木板紋理覆蓋 */}
         <div
