@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { NewsItem, NewsSource } from '../types';
+import { NewsItem } from '../types';
 import { Badge, Card } from './ui/primitives';
 import { ChevronLeft, ChevronRight, Clock } from 'lucide-react';
 import { cn, timeAgo, sourceColors } from '../lib/utils';
@@ -9,19 +9,11 @@ interface HeroCarouselProps {
   news: NewsItem[];
 }
 
-// 來源優先順序配置：HK01(3) > Yahoo(2) > 明報(2) > RTHK(2)
-const SOURCE_CONFIG: { source: NewsSource; count: number }[] = [
-  { source: 'HK01', count: 3 },
-  { source: 'Yahoo新聞', count: 2 },
-  { source: '明報', count: 2 },
-  { source: 'RTHK', count: 2 },
-];
-
 export const HeroCarousel: React.FC<HeroCarouselProps> = ({ news }) => {
   const [current, setCurrent] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
 
-  // 按來源分組新聞
+  // 按報章分組新聞
   const groupedNews: Record<string, NewsItem[]> = {};
   for (const item of news) {
     if (!groupedNews[item.source]) {
@@ -30,11 +22,19 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({ news }) => {
     groupedNews[item.source].push(item);
   }
 
-  // 獲取各來源的新聞
-  const hk01News = (groupedNews['HK01'] || []).slice(0, 3);
-  const yahooNews = (groupedNews['Yahoo新聞'] || []).slice(0, 2);
-  const mingpaoNews = (groupedNews['明報'] || []).slice(0, 2);
-  const rthkNews = (groupedNews['RTHK'] || []).slice(0, 2);
+  // 各報章新聞 (按時間排序)
+  const hk01News = (groupedNews['HK01'] || [])
+    .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
+    .slice(0, 3);
+  const yahooNews = (groupedNews['Yahoo新聞'] || [])
+    .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
+    .slice(0, 2);
+  const mingpaoNews = (groupedNews['明報'] || [])
+    .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
+    .slice(0, 2);
+  const rthkNews = (groupedNews['RTHK'] || [])
+    .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
+    .slice(0, 2);
 
   useEffect(() => {
     if (isPaused || hk01News.length === 0) return;
@@ -52,14 +52,14 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({ news }) => {
 
   const currentNews = hk01News[current];
 
-  // 渲染來源欄位（右側的 2 篇新聞列表）
+  // 渲染報章欄位
   const renderSourceColumn = (
     sourceNews: NewsItem[],
     sourceName: string,
-    sourceColor: string
+    headerColor: string
   ) => (
     <div className="flex flex-col h-full">
-      <div className={cn('px-2 py-1.5 text-xs font-medium border-b', sourceColor)}>
+      <div className={cn('px-2 py-1.5 text-xs font-medium border-b', headerColor)}>
         {sourceName}
       </div>
       <div className="flex-1 divide-y">
@@ -91,14 +91,13 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({ news }) => {
       <div className="container mx-auto px-4 py-4">
         {/* 9 欄網格: HK01(3) + Yahoo(2) + 明報(2) + RTHK(2) */}
         <div className="grid grid-cols-1 lg:grid-cols-9 gap-3">
-          {/* 左側 HK01 輪播區 - 3 欄 */}
+          {/* HK01 輪播區 - 3 欄 */}
           <div
             className="lg:col-span-3"
             onMouseEnter={() => setIsPaused(true)}
             onMouseLeave={() => setIsPaused(false)}
           >
             <Card className="overflow-hidden group relative h-full">
-              {/* 圖片區 */}
               <div className="relative aspect-[4/3] bg-muted overflow-hidden">
                 {hk01News.map((item, index) => (
                   <Link
@@ -114,7 +113,6 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({ news }) => {
                       alt={item.title}
                       className="w-full h-full object-cover"
                     />
-                    {/* 漸層覆蓋 */}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
                   </Link>
                 ))}
@@ -146,17 +144,9 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({ news }) => {
 
                 {/* 底部標題 */}
                 <div className="absolute bottom-0 left-0 right-0 p-3 z-20">
-                  <div className="flex items-center gap-2 mb-1 text-xs text-white/80">
-                    <Badge
-                      variant="outline"
-                      className="text-[10px] h-4 border-white/30 text-white bg-white/10"
-                    >
-                      {currentNews?.category}
-                    </Badge>
-                    <span className="flex items-center gap-1">
-                      <Clock size={10} />
-                      {timeAgo(currentNews?.publishedAt)}
-                    </span>
+                  <div className="flex items-center gap-1 mb-1 text-xs text-white/80">
+                    <Clock size={10} />
+                    <span>{timeAgo(currentNews?.publishedAt)}</span>
                   </div>
                   <Link to={`/news/${currentNews?.id}`}>
                     <h2 className="text-base font-serif font-bold text-white leading-tight line-clamp-2 hover:text-white/90 transition-colors">

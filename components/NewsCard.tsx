@@ -95,8 +95,7 @@ export const NewsCard: React.FC<NewsCardProps> = ({
         </div>
       </div>
       <CardContent className="p-4 flex flex-col flex-grow">
-        <div className="flex items-center justify-between mb-2">
-           <Badge variant="outline" className="text-[10px] h-5">{news.category}</Badge>
+        <div className="flex items-center justify-end mb-2">
            <span className="text-xs text-muted-foreground">{timeAgo(news.publishedAt)}</span>
         </div>
         <h3 className="font-serif font-bold text-lg leading-tight mb-2 group-hover:text-brand-blue transition-colors line-clamp-2">

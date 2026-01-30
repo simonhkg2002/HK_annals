@@ -320,20 +320,9 @@ interface NewsItemWithCluster extends NewsItem {
   titleNormalized?: string;
 }
 
-// 來源優先順序: HK01 > Yahoo > 明報 > RTHK
-const SOURCE_PRIORITY: Record<string, number> = {
-  'HK01': 1,
-  'Yahoo新聞': 2,
-  '明報': 3,
-  'RTHK': 4,
-};
-
 /**
- * 獲取首頁新聞（過濾 >65% 相似的新聞，但保留 HK01 更新）
- * 邏輯：
- * 1. HK01 的新聞優先顯示
- * 2. 如果其他來源的新聞與已顯示的 HK01 新聞 >65% 相似，則隱藏
- * 3. 但如果 HK01 稍後發布了更新（即使與自己先前的新聞相似），仍然顯示
+ * 獲取首頁新聞（過濾 >65% 相似的新聞）
+ * 邏輯：按發布時間排序，過濾掉相似的重複報導
  */
 export async function fetchLatestNewsFiltered(limit: number = 50): Promise<NewsItem[]> {
   // 獲取最近的新聞，包含 cluster_id 和 title_normalized
@@ -369,15 +358,11 @@ export async function fetchLatestNewsFiltered(limit: number = 50): Promise<NewsI
   // 過濾相似新聞
   const displayedNews: NewsItemWithCluster[] = [];
   const displayedClusters = new Set<string>();
-  const displayedTitles = new Map<string, { source: string; time: string }>();
+  const displayedTitles = new Map<string, string>();
 
   for (const news of allNews) {
-    // 檢查是否在同一群組
+    // 檢查是否在同一群組（跳過重複群組）
     if (news.clusterId && displayedClusters.has(news.clusterId)) {
-      // 同群組的新聞，只有 HK01 的更新才顯示
-      if (news.source === 'HK01') {
-        displayedNews.push(news);
-      }
       continue;
     }
 
@@ -385,20 +370,13 @@ export async function fetchLatestNewsFiltered(limit: number = 50): Promise<NewsI
     if (news.titleNormalized) {
       let shouldSkip = false;
 
-      for (const [existingTitle, info] of displayedTitles.entries()) {
+      for (const existingTitle of displayedTitles.keys()) {
         const similarity = calculateSimpleSimilarity(news.titleNormalized, existingTitle);
 
         if (similarity >= 0.65) {
-          // >65% 相似
-          if (news.source === 'HK01') {
-            // HK01 更新，即使相似也顯示
-            continue;
-          }
-          // 其他來源，如果已有 HK01 的報導，則跳過
-          if (SOURCE_PRIORITY[info.source] <= SOURCE_PRIORITY[news.source]) {
-            shouldSkip = true;
-            break;
-          }
+          // >65% 相似，跳過（保留先出現的，即較新的）
+          shouldSkip = true;
+          break;
         }
       }
 
@@ -415,10 +393,7 @@ export async function fetchLatestNewsFiltered(limit: number = 50): Promise<NewsI
     }
 
     if (news.titleNormalized) {
-      displayedTitles.set(news.titleNormalized, {
-        source: news.source,
-        time: news.publishedAt,
-      });
+      displayedTitles.set(news.titleNormalized, news.publishedAt);
     }
 
     if (displayedNews.length >= limit) {
