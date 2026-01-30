@@ -1,9 +1,9 @@
 /**
- * 明報港聞爬蟲
- * RSS: https://news.mingpao.com/rss/ins/s00001.xml
+ * RTHK 港聞爬蟲
+ * API: https://news.rthk.hk/rthk/webpageCache/services/loadModNewsShowSp2List.php
  */
 
-import { db } from './db';
+import { db } from '../db/client';
 import {
   normalizeTitle,
   generateContentHash,
@@ -12,12 +12,12 @@ import {
   type ArticleForDedup,
 } from '../lib/dedup';
 
-// 明報 RSS 分類
-const MINGPAO_RSS = {
-  local: 'https://news.mingpao.com/rss/ins/s00001.xml',      // 港聞
-  china: 'https://news.mingpao.com/rss/ins/s00002.xml',      // 兩岸
-  international: 'https://news.mingpao.com/rss/ins/s00003.xml', // 國際
-  economy: 'https://news.mingpao.com/rss/ins/s00004.xml',    // 經濟
+// RTHK 分類代碼
+const RTHK_CATEGORIES = {
+  local: 3,      // 港聞
+  greaterChina: 2,  // 大中華
+  international: 4, // 國際
+  finance: 5,    // 財經
 };
 
 // 轉換為資料庫格式
@@ -46,10 +46,51 @@ interface ParsedArticle {
   id: string;
   url: string;
   title: string;
-  description: string;
   publishedAt: string;
-  imageUrl: string | null;
-  category: string | null;
+  hasVideo: boolean;
+}
+
+/**
+ * 從 HTML 列表中解析文章
+ */
+function parseArticleList(html: string): ParsedArticle[] {
+  const articles: ParsedArticle[] = [];
+
+  // 匹配每個文章區塊
+  const articlePattern = /<h4 class='ns2-title'><a href='([^']+)'>([^<]+)<\/a><\/h4>[\s\S]*?<div class='ns2-created'>([^<]+)<\/div>/g;
+
+  let match;
+  while ((match = articlePattern.exec(html)) !== null) {
+    const url = match[1];
+    const title = match[2].trim();
+    const dateStr = match[3].trim(); // Format: "2026-01-29 HKT 20:52"
+
+    // 從 URL 提取 ID: https://news.rthk.hk/rthk/ch/component/k2/1841940-20260129.htm
+    const idMatch = url.match(/\/k2\/(\d+)-(\d+)\.htm/);
+    if (!idMatch) continue;
+
+    const id = idMatch[1];
+
+    // 解析日期時間
+    const dateMatch = dateStr.match(/(\d{4}-\d{2}-\d{2}) HKT (\d{2}:\d{2})/);
+    if (!dateMatch) continue;
+
+    const publishedAt = `${dateMatch[1]}T${dateMatch[2]}:00+08:00`;
+
+    // 檢查是否有影片
+    const hasVideo = html.includes(`video_icon.png`) &&
+                     html.substring(match.index!, match.index! + 500).includes('video_icon.png');
+
+    articles.push({
+      id,
+      url,
+      title,
+      publishedAt,
+      hasVideo,
+    });
+  }
+
+  return articles;
 }
 
 /**
@@ -78,6 +119,7 @@ async function fetchWithRetry(
         return response;
       }
 
+      // 429 Too Many Requests
       if (response.status === 429) {
         console.log(`   ⏳ Rate limited, waiting ${attempt * 2}s...`);
         await delay(attempt * 2000);
@@ -95,140 +137,101 @@ async function fetchWithRetry(
 }
 
 /**
- * 獲取明報文章全文
+ * 獲取文章詳情（描述、圖片、全文）
  */
-async function fetchMingPaoContent(url: string): Promise<string | null> {
+async function fetchArticleDetails(url: string): Promise<{
+  description: string;
+  image: string | null;
+  content: string | null;
+}> {
   try {
     const response = await fetchWithRetry(url, 2);
-    if (!response) return null;
+
+    if (!response) {
+      return { description: '', image: null, content: null };
+    }
 
     const html = await response.text();
 
-    // 尋找文章內容區塊
-    const contentMatch = html.match(/<div class="article_content"[^>]*>([\s\S]*?)<\/div>/);
-    if (!contentMatch) return null;
-
-    // 清理 HTML
-    const content = contentMatch[1]
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<p[^>]*>/gi, '\n')
-      .replace(/<\/p>/gi, '\n')
-      .replace(/<[^>]+>/g, '')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&quot;/g, '"')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-
-    return content || null;
-  } catch (error) {
-    console.log(`   ⚠️ Failed to fetch content for ${url}`);
-    return null;
-  }
-}
-
-/**
- * 解析 RSS XML
- */
-function parseRSS(xml: string): ParsedArticle[] {
-  const articles: ParsedArticle[] = [];
-
-  // 匹配每個 item
-  const itemPattern = /<item>([\s\S]*?)<\/item>/g;
-  let match;
-
-  while ((match = itemPattern.exec(xml)) !== null) {
-    const itemXml = match[1];
-
-    // 提取標題
-    const titleMatch = itemXml.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/);
-    const title = titleMatch ? titleMatch[1].trim() : '';
-
-    // 提取描述
-    const descMatch = itemXml.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/);
-    const description = descMatch ? descMatch[1].trim() : '';
-
-    // 提取連結
-    const linkMatch = itemXml.match(/<link><!\[CDATA\[(.*?)\]\]><\/link>/);
-    const url = linkMatch ? linkMatch[1].trim() : '';
-
-    // 提取 GUID 作為 ID
-    const guidMatch = itemXml.match(/<guid[^>]*><!\[CDATA\[(.*?)\]\]><\/guid>/);
-    const guid = guidMatch ? guidMatch[1] : url;
-
-    // 從 URL 提取文章 ID（時間戳 - 13位數字）
-    // URL 格式: /article/20260129/s00001/1769693389407/...
-    const idMatch = url.match(/\/(\d{13})\//);
-    const id = idMatch ? idMatch[1] : String(Date.now());
-
-    // 提取發布日期
-    const pubDateMatch = itemXml.match(/<pubDate>(.*?)<\/pubDate>/);
-    let publishedAt = new Date().toISOString();
-    if (pubDateMatch) {
-      const date = new Date(pubDateMatch[1]);
-      if (!isNaN(date.getTime())) {
-        publishedAt = date.toISOString();
-      }
-    }
-
-    // 提取分類
-    const categoryMatch = itemXml.match(/<category><!\[CDATA\[(.*?)\]\]><\/category>/);
-    const category = categoryMatch ? categoryMatch[1] : null;
+    // 提取 og:description
+    const descMatch = html.match(/og:description" content="([^"]+)"/);
+    const description = descMatch ? descMatch[1] : '';
 
     // 提取圖片
-    const imageMatch = itemXml.match(/url="([^"]+\.(jpg|jpeg|png|gif|webp))"/i);
-    const imageUrl = imageMatch ? imageMatch[1] : null;
+    const imageMatch = html.match(/og:image" content="([^"]+)"/) ||
+                       html.match(/itemImage[^>]*src="([^"]+)"/);
+    const image = imageMatch ? imageMatch[1] : null;
 
-    if (title && url) {
-      articles.push({
-        id,
-        url,
-        title,
-        description,
-        publishedAt,
-        imageUrl,
-        category,
-      });
+    // 提取全文內容
+    let content: string | null = null;
+    const contentMatch = html.match(/<div class="itemFullText"[^>]*>([\s\S]*?)<\/div>/);
+    if (contentMatch) {
+      // 移除 HTML 標籤，保留文字
+      content = contentMatch[1]
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<p[^>]*>/gi, '\n')
+        .replace(/<\/p>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
     }
-  }
 
-  return articles;
+    return { description, image, content };
+  } catch (error) {
+    console.log(`   ⚠️ Failed to fetch details for ${url}`);
+    return { description: '', image: null, content: null };
+  }
 }
 
-async function getCategoryId(): Promise<number | null> {
+async function getCategoryId(categoryCode: string): Promise<number | null> {
+  const mapping: Record<string, string> = {
+    local: 'local',
+    greaterChina: 'china',
+    international: 'international',
+    finance: 'economy',
+  };
+
+  const code = mapping[categoryCode] || 'local';
   const result = await db.execute({
     sql: 'SELECT id FROM categories WHERE code = ?',
-    args: ['local'],
+    args: [code],
   });
   return result.rows.length > 0 ? (result.rows[0].id as number) : null;
 }
 
 async function getMediaSourceId(): Promise<number> {
   const result = await db.execute({
-    sql: "SELECT id FROM media_sources WHERE code = 'mingpao'",
+    sql: "SELECT id FROM media_sources WHERE code = 'rthk'",
     args: [],
   });
   if (result.rows.length === 0) {
-    throw new Error('Ming Pao media source not found');
+    throw new Error('RTHK media source not found');
   }
   return result.rows[0].id as number;
 }
 
 /**
- * 抓取明報 RSS
+ * 抓取 RTHK 新聞列表
  */
-export async function fetchMingPaoRSS(
-  category: keyof typeof MINGPAO_RSS = 'local'
+export async function fetchRTHKNews(
+  category: keyof typeof RTHK_CATEGORIES = 'local',
+  limit: number = 30
 ): Promise<string> {
-  const url = MINGPAO_RSS[category];
+  const catId = RTHK_CATEGORIES[category];
+  const url = `https://news.rthk.hk/rthk/webpageCache/services/loadModNewsShowSp2List.php?lang=zh-TW&cat=${catId}&newsCount=${limit}&dayShiftMode=1&archive_date=`;
 
   console.log(`📡 Fetching: ${url}`);
 
   const response = await fetch(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Referer': 'https://news.rthk.hk/rthk/ch/latest-news/local.htm',
+      'X-Requested-With': 'XMLHttpRequest',
     },
   });
 
@@ -239,24 +242,24 @@ export async function fetchMingPaoRSS(
   return response.text();
 }
 
-export async function scrapeMingPao(options: {
+export async function scrapeRTHK(options: {
   limit?: number;
   saveToDb?: boolean;
-  fetchContent?: boolean;
+  fetchDetails?: boolean;
 } = {}): Promise<ArticleInsert[]> {
-  const { limit = 30, saveToDb = false, fetchContent = false } = options;
+  const { limit = 30, saveToDb = false, fetchDetails = false } = options;
 
-  console.log('🚀 Starting Ming Pao scraper...');
+  console.log('🚀 Starting RTHK scraper...');
   console.log(`   Category: 港聞 (local)`);
   console.log(`   Limit: ${limit}`);
   console.log(`   Save to DB: ${saveToDb}`);
-  console.log(`   Fetch content: ${fetchContent}`);
+  console.log(`   Fetch details: ${fetchDetails}`);
   console.log('');
 
-  const xml = await fetchMingPaoRSS('local');
-  const parsedArticles = parseRSS(xml).slice(0, limit);
+  const html = await fetchRTHKNews('local', limit);
+  const parsedArticles = parseArticleList(html);
 
-  console.log(`📊 Parsed ${parsedArticles.length} articles from RSS`);
+  console.log(`📊 Parsed ${parsedArticles.length} articles from list`);
 
   const articles: ArticleInsert[] = [];
   let mediaSourceId: number | null = null;
@@ -264,39 +267,46 @@ export async function scrapeMingPao(options: {
 
   if (saveToDb) {
     mediaSourceId = await getMediaSourceId();
-    categoryId = await getCategoryId();
+    categoryId = await getCategoryId('local');
   }
 
   for (const parsed of parsedArticles) {
-    // 可選：抓取全文
+    let summary = '';
+    let thumbnail: string | null = null;
     let content: string | null = null;
-    if (fetchContent) {
-      console.log(`   📄 Fetching content for: ${parsed.title.substring(0, 30)}...`);
-      content = await fetchMingPaoContent(parsed.url);
+
+    // 可選：獲取文章詳情
+    if (fetchDetails) {
+      console.log(`   📄 Fetching details for: ${parsed.title.substring(0, 30)}...`);
+      const details = await fetchArticleDetails(parsed.url);
+      summary = details.description;
+      thumbnail = details.image;
+      content = details.content;
+      // 避免請求過快
       await delay(300);
     }
 
     // 生成去重用的 hash 和正規化標題
-    const contentForHash = parsed.title + (content || parsed.description);
+    const contentForHash = parsed.title + (content || summary);
     const contentHash = generateContentHash(contentForHash);
     const titleNormalized = normalizeTitle(parsed.title);
 
     const article: ArticleInsert = {
-      media_source_id: mediaSourceId || 5, // Ming Pao 的 ID
+      media_source_id: mediaSourceId || 3, // RTHK 的 ID
       original_id: parsed.id,
       original_url: parsed.url,
       title: parsed.title,
       content,
-      summary: parsed.description,
-      published_at: parsed.publishedAt,
+      summary,
+      published_at: new Date(parsed.publishedAt).toISOString(),
       updated_at: null,
       category_id: categoryId,
-      tags: JSON.stringify(parsed.category ? [parsed.category] : []),
-      thumbnail_url: parsed.imageUrl,
-      author: '明報',
+      tags: JSON.stringify([]),
+      thumbnail_url: thumbnail,
+      author: 'RTHK',
       language: 'zh',
-      is_headline: parsed.category === '編輯推介' ? 1 : 0,
-      importance_score: parsed.category === '編輯推介' ? 70 : 50,
+      is_headline: 0,
+      importance_score: 50,
       content_hash: contentHash,
       title_normalized: titleNormalized,
       cluster_id: null,
@@ -338,8 +348,8 @@ export async function scrapeMingPao(options: {
 
     // 使用 60% 相似度閾值
     const SIMILARITY_THRESHOLD = {
-      titleSimilarity: 0.6,
-      contentSimilarity: 0.5,
+      titleSimilarity: 0.6,    // 標題相似度 >= 60% 視為相似
+      contentSimilarity: 0.5,  // 內容相似度 >= 50% 視為相似
     };
 
     for (const article of articles) {
@@ -366,16 +376,18 @@ export async function scrapeMingPao(options: {
         continue;
       }
 
-      // 如果標題相似度 >= 60%，歸入同一群組
+      // 如果標題相似度 >= 60%，歸入同一群組但仍儲存
       if (dupCheck.matchType === 'similar_title' || dupCheck.matchType === 'similar_content') {
         if (dupCheck.clusterId) {
           article.cluster_id = dupCheck.clusterId;
           clustered++;
           console.log(`   🔗 Linked to cluster (${(dupCheck.similarityScore * 100).toFixed(0)}% similar): ${article.title.substring(0, 40)}...`);
         } else if (dupCheck.matchedArticleId) {
+          // 為相似文章創建新群組
           const newClusterId = generateClusterId();
           article.cluster_id = newClusterId;
 
+          // 創建群組並更新原文章
           await db.execute({
             sql: `INSERT INTO news_clusters (id, main_article_id, title, article_count, first_seen_at)
                   VALUES (?, ?, ?, 2, datetime('now'))`,
@@ -424,6 +436,7 @@ export async function scrapeMingPao(options: {
         });
         inserted++;
 
+        // 更新群組計數
         if (article.cluster_id) {
           await db.execute({
             sql: 'UPDATE news_clusters SET article_count = article_count + 1, last_updated_at = datetime("now") WHERE id = ?',
@@ -431,6 +444,7 @@ export async function scrapeMingPao(options: {
           });
         }
 
+        // 添加到現有文章列表（供後續文章比對）
         existingArticles.push({
           id: article.original_id,
           title: article.title,
@@ -456,12 +470,12 @@ export async function scrapeMingPao(options: {
   return articles;
 }
 
-// 測試用
+// 測試用：只輸出 JSON
 export async function testFetch(): Promise<void> {
-  console.log('🧪 Test mode - Fetching Ming Pao RSS...\n');
+  console.log('🧪 Test mode - Fetching RTHK news...\n');
 
-  const xml = await fetchMingPaoRSS('local');
-  const articles = parseRSS(xml).slice(0, 10);
+  const html = await fetchRTHKNews('local', 10);
+  const articles = parseArticleList(html);
 
   console.log('='.repeat(60));
   console.log('PARSED ARTICLES:');
@@ -475,8 +489,7 @@ export async function testFetch(): Promise<void> {
 // 直接執行
 const args = process.argv.slice(2);
 if (args.includes('--save')) {
-  const fetchContent = args.includes('--content');
-  scrapeMingPao({ limit: 30, saveToDb: true, fetchContent }).catch(console.error);
+  scrapeRTHK({ limit: 30, saveToDb: true, fetchDetails: true }).catch(console.error);
 } else {
   testFetch().catch(console.error);
 }

@@ -3,7 +3,7 @@
  * API: https://web-data.api.hk01.com/v2/feed/zone/1
  */
 
-import { db } from './db';
+import { db } from '../db/client';
 import {
   normalizeTitle,
   generateContentHash,

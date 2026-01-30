@@ -4,7 +4,7 @@
  * 只爬取本地新聞，排除娛樂和健康類別
  */
 
-import { db } from './db';
+import { db } from '../db/client';
 import {
   normalizeTitle,
   generateContentHash,

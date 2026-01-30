@@ -3,7 +3,7 @@
  * 使用多個分類 API 獲取過去 6 個月的新聞
  */
 
-import { db } from './db';
+import { db } from '../db/client';
 
 interface ArticleData {
   articleId: number;
