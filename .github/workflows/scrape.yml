@@ -42,7 +42,8 @@ jobs:
 
       - name: Run HK01 scraper
         if: ${{ github.event.inputs.source == 'all' || github.event.inputs.source == 'hk01' || github.event_name == 'schedule' }}
-        run: npm run scrape:hk01:save
+        run: npm run scrape:hk01:full
+        continue-on-error: true
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
@@ -50,13 +51,15 @@ jobs:
       - name: Run RTHK scraper
         if: ${{ github.event.inputs.source == 'all' || github.event.inputs.source == 'rthk' || github.event_name == 'schedule' }}
         run: npm run scrape:rthk:save
+        continue-on-error: true
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
 
       - name: Run Ming Pao scraper
         if: ${{ github.event.inputs.source == 'all' || github.event.inputs.source == 'mingpao' || github.event_name == 'schedule' }}
-        run: npm run scrape:mingpao:save
+        run: npm run scrape:mingpao:full
+        continue-on-error: true
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}

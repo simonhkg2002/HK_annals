@@ -113,6 +113,87 @@ async function getMediaSourceId(): Promise<number> {
   return result.rows[0].id as number;
 }
 
+// 文章詳情 API 回應
+interface HK01ArticleDetail {
+  articleId: number;
+  title: string;
+  description: string;
+  publishUrl: string;
+  canonicalUrl: string;
+  publishTime: number;
+  lastModifyTime: number;
+  authors: Array<{ publishName: string }>;
+  mainCategory: string;
+  mainImage?: { cdnUrl: string };
+  tags?: Array<{ tagName: string }>;
+  isFeatured?: boolean;
+  isSponsored?: boolean;
+  blocks?: Array<{
+    type: string;
+    elements?: Array<{
+      type: string;
+      text?: string;
+    }>;
+  }>;
+}
+
+interface HK01ArticleDetailResponse {
+  article: HK01ArticleDetail;
+}
+
+/**
+ * 延遲函數
+ */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 帶重試的 fetch
+ */
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit = {},
+  maxRetries: number = 3
+): Promise<Response> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          Accept: 'application/json',
+          ...options.headers,
+        },
+      });
+
+      if (response.ok) {
+        return response;
+      }
+
+      // 429 Too Many Requests - 等待後重試
+      if (response.status === 429) {
+        console.log(`   ⏳ Rate limited, waiting ${attempt * 2}s...`);
+        await delay(attempt * 2000);
+        continue;
+      }
+
+      // 其他錯誤
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    } catch (error) {
+      lastError = error as Error;
+      if (attempt < maxRetries) {
+        console.log(`   ⚠️ Attempt ${attempt} failed, retrying in ${attempt}s...`);
+        await delay(attempt * 1000);
+      }
+    }
+  }
+
+  throw lastError || new Error('Max retries exceeded');
+}
+
 export async function fetchHK01News(
   zoneId: number = 1, // 1 = 港聞
   limit: number = 20,
@@ -122,30 +203,119 @@ export async function fetchHK01News(
 
   console.log(`📡 Fetching: ${url}`);
 
-  const response = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      Accept: 'application/json',
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-  }
-
+  const response = await fetchWithRetry(url);
   return response.json();
+}
+
+/**
+ * 獲取文章全文（從網頁抓取）
+ */
+export async function fetchArticleContent(articleUrl: string): Promise<string | null> {
+  try {
+    const response = await fetchWithRetry(articleUrl, {}, 2);
+    const html = await response.text();
+
+    // 方法 1: 從 __NEXT_DATA__ 提取 (Next.js)
+    const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    if (nextDataMatch) {
+      try {
+        const nextData = JSON.parse(nextDataMatch[1]);
+
+        // HK01 結構: props.initialProps.pageProps.article
+        const article =
+          nextData?.props?.initialProps?.pageProps?.article ||
+          nextData?.props?.pageProps?.article;
+
+        if (article?.blocks) {
+          const contentParts: string[] = [];
+
+          for (const block of article.blocks) {
+            // 結構 1: blockType + summary 陣列
+            if (block.blockType === 'summary' && block.summary) {
+              contentParts.push(...block.summary);
+            }
+            // 結構 2: blockType + text + htmlTokens
+            else if (block.blockType === 'text' && block.htmlTokens) {
+              for (const tokenGroup of block.htmlTokens) {
+                if (Array.isArray(tokenGroup)) {
+                  for (const token of tokenGroup) {
+                    if (token.type === 'text' && token.content) {
+                      contentParts.push(token.content);
+                    }
+                  }
+                }
+              }
+            }
+            // 結構 3: blockType + paragraphs 陣列
+            else if (block.blockType === 'paragraph' && block.paragraphs) {
+              for (const p of block.paragraphs) {
+                if (p.text) contentParts.push(p.text);
+              }
+            }
+            // 結構 4: type + elements
+            else if (block.type === 'paragraph' && block.elements) {
+              const text = block.elements
+                .filter((el: any) => el.type === 'text' && el.text)
+                .map((el: any) => el.text)
+                .join('');
+              if (text.trim()) {
+                contentParts.push(text.trim());
+              }
+            }
+          }
+
+          if (contentParts.length > 0) {
+            return contentParts.join('\n\n');
+          }
+        }
+
+        // 嘗試 description
+        if (article?.description) {
+          return article.description;
+        }
+      } catch {
+        // 繼續嘗試其他方法
+      }
+    }
+
+    // 方法 2: 從 JSON-LD 結構化資料提取
+    const jsonLdMatch = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/);
+    if (jsonLdMatch) {
+      try {
+        const jsonLd = JSON.parse(jsonLdMatch[1]);
+        if (jsonLd.articleBody) {
+          return jsonLd.articleBody;
+        }
+      } catch {
+        // 繼續
+      }
+    }
+
+    // 方法 3: 從 meta description 提取
+    const descMatch = html.match(/og:description" content="([^"]+)"/);
+    if (descMatch) {
+      return descMatch[1];
+    }
+
+    return null;
+  } catch (error) {
+    console.log(`   ⚠️ Failed to fetch content from ${articleUrl}`);
+    return null;
+  }
 }
 
 export async function scrapeHK01(options: {
   limit?: number;
   saveToDb?: boolean;
+  fetchContent?: boolean;
 } = {}): Promise<ArticleInsert[]> {
-  const { limit = 20, saveToDb = false } = options;
+  const { limit = 20, saveToDb = false, fetchContent = false } = options;
 
   console.log('🚀 Starting HK01 scraper...');
   console.log(`   Zone: 港聞 (1)`);
   console.log(`   Limit: ${limit}`);
   console.log(`   Save to DB: ${saveToDb}`);
+  console.log(`   Fetch content: ${fetchContent}`);
   console.log('');
 
   const response = await fetchHK01News(1, limit, 0);
@@ -167,8 +337,18 @@ export async function scrapeHK01(options: {
 
     const categoryId = saveToDb ? await getCategoryId(data.mainCategory) : null;
 
+    // 可選：抓取全文
+    let content: string | null = null;
+    if (fetchContent) {
+      const articleUrl = data.canonicalUrl || data.publishUrl;
+      console.log(`   📄 Fetching content for: ${data.title.substring(0, 30)}...`);
+      content = await fetchArticleContent(articleUrl);
+      // 避免請求過快
+      await delay(500);
+    }
+
     // 生成去重用的 hash 和正規化標題
-    const contentForHash = data.title + (data.description || '');
+    const contentForHash = data.title + (content || data.description || '');
     const contentHash = generateContentHash(contentForHash);
     const titleNormalized = normalizeTitle(data.title);
 
@@ -177,7 +357,7 @@ export async function scrapeHK01(options: {
       original_id: String(data.articleId),
       original_url: data.canonicalUrl || data.publishUrl,
       title: data.title,
-      content: null, // 需要額外抓取文章內容
+      content,
       summary: data.description || '',
       published_at: new Date(data.publishTime * 1000).toISOString(),
       updated_at: data.lastModifyTime
@@ -400,7 +580,8 @@ export async function testFetch(): Promise<void> {
 // 直接執行
 const args = process.argv.slice(2);
 if (args.includes('--save')) {
-  scrapeHK01({ limit: 20, saveToDb: true }).catch(console.error);
+  const fetchContent = args.includes('--content');
+  scrapeHK01({ limit: 20, saveToDb: true, fetchContent }).catch(console.error);
 } else {
   testFetch().catch(console.error);
 }

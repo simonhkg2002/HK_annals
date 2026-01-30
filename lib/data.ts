@@ -210,3 +210,443 @@ export async function fetchNewsBySource(
 
   return result.rows.map((row) => dbToNewsItem(row as unknown as DBArticle));
 }
+
+// 獲取單條新聞詳情
+export interface NewsDetail extends NewsItem {
+  content: string | null;
+  clusterId: string | null;
+}
+
+export async function fetchNewsById(id: string): Promise<NewsDetail | null> {
+  const result = await db.execute({
+    sql: `
+      SELECT
+        a.*,
+        a.content,
+        a.cluster_id,
+        ms.code as source_code,
+        ms.name_zh as source_name,
+        c.code as category_code,
+        c.name_zh as category_name
+      FROM articles a
+      LEFT JOIN media_sources ms ON a.media_source_id = ms.id
+      LEFT JOIN categories c ON a.category_id = c.id
+      WHERE a.id = ?
+    `,
+    args: [id],
+  });
+
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  const row = result.rows[0] as Record<string, unknown>;
+  return {
+    ...dbToNewsItem(row as unknown as DBArticle),
+    content: row.content as string | null,
+    clusterId: row.cluster_id as string | null,
+  };
+}
+
+// 獲取相關新聞（同群組或同分類）
+export async function fetchRelatedNews(
+  newsId: string,
+  clusterId: string | null,
+  category: string,
+  limit: number = 6
+): Promise<NewsItem[]> {
+  // 先嘗試獲取同群組的新聞
+  if (clusterId) {
+    const clusterNews = await db.execute({
+      sql: `
+        SELECT
+          a.*,
+          ms.code as source_code,
+          ms.name_zh as source_name,
+          c.code as category_code,
+          c.name_zh as category_name
+        FROM articles a
+        LEFT JOIN media_sources ms ON a.media_source_id = ms.id
+        LEFT JOIN categories c ON a.category_id = c.id
+        WHERE a.cluster_id = ? AND a.id != ?
+        ORDER BY a.published_at DESC
+        LIMIT ?
+      `,
+      args: [clusterId, newsId, limit],
+    });
+
+    if (clusterNews.rows.length > 0) {
+      return clusterNews.rows.map((row) => dbToNewsItem(row as unknown as DBArticle));
+    }
+  }
+
+  // 如果沒有同群組的，獲取同分類的新聞
+  const categoryCode = Object.entries({
+    '港聞': 'local',
+    '社會': 'society',
+    '政治': 'politics',
+    '財經': 'economy',
+    '國際': 'international',
+    '中國': 'china',
+    '體育': 'sports',
+    '娛樂': 'entertainment',
+  }).find(([name]) => name === category)?.[1] || 'local';
+
+  const result = await db.execute({
+    sql: `
+      SELECT
+        a.*,
+        ms.code as source_code,
+        ms.name_zh as source_name,
+        c.code as category_code,
+        c.name_zh as category_name
+      FROM articles a
+      LEFT JOIN media_sources ms ON a.media_source_id = ms.id
+      LEFT JOIN categories c ON a.category_id = c.id
+      WHERE c.code = ? AND a.id != ?
+      ORDER BY a.published_at DESC
+      LIMIT ?
+    `,
+    args: [categoryCode, newsId, limit],
+  });
+
+  return result.rows.map((row) => dbToNewsItem(row as unknown as DBArticle));
+}
+
+// ============ 相似度過濾（首頁用） ============
+
+interface NewsItemWithCluster extends NewsItem {
+  clusterId?: string;
+  titleNormalized?: string;
+}
+
+// 來源優先順序
+const SOURCE_PRIORITY: Record<string, number> = {
+  'HK01': 1,
+  '明報': 2,
+  'RTHK': 3,
+};
+
+/**
+ * 獲取首頁新聞（過濾 >65% 相似的新聞，但保留 HK01 更新）
+ * 邏輯：
+ * 1. HK01 的新聞優先顯示
+ * 2. 如果其他來源的新聞與已顯示的 HK01 新聞 >65% 相似，則隱藏
+ * 3. 但如果 HK01 稍後發布了更新（即使與自己先前的新聞相似），仍然顯示
+ */
+export async function fetchLatestNewsFiltered(limit: number = 50): Promise<NewsItem[]> {
+  // 獲取最近的新聞，包含 cluster_id 和 title_normalized
+  const result = await db.execute({
+    sql: `
+      SELECT
+        a.*,
+        a.cluster_id,
+        a.title_normalized,
+        ms.code as source_code,
+        ms.name_zh as source_name,
+        c.code as category_code,
+        c.name_zh as category_name
+      FROM articles a
+      LEFT JOIN media_sources ms ON a.media_source_id = ms.id
+      LEFT JOIN categories c ON a.category_id = c.id
+      WHERE COALESCE(a.is_disabled, 0) = 0
+      ORDER BY a.published_at DESC
+      LIMIT ?
+    `,
+    args: [limit * 3], // 取更多資料用於過濾
+  });
+
+  const allNews = result.rows.map((row) => {
+    const r = row as Record<string, unknown>;
+    return {
+      ...dbToNewsItem(r as unknown as DBArticle),
+      clusterId: r.cluster_id as string | undefined,
+      titleNormalized: r.title_normalized as string | undefined,
+    } as NewsItemWithCluster;
+  });
+
+  // 過濾相似新聞
+  const displayedNews: NewsItemWithCluster[] = [];
+  const displayedClusters = new Set<string>();
+  const displayedTitles = new Map<string, { source: string; time: string }>();
+
+  for (const news of allNews) {
+    // 檢查是否在同一群組
+    if (news.clusterId && displayedClusters.has(news.clusterId)) {
+      // 同群組的新聞，只有 HK01 的更新才顯示
+      if (news.source === 'HK01') {
+        displayedNews.push(news);
+      }
+      continue;
+    }
+
+    // 檢查標題相似度（簡化版：使用正規化標題比對）
+    if (news.titleNormalized) {
+      let shouldSkip = false;
+
+      for (const [existingTitle, info] of displayedTitles.entries()) {
+        const similarity = calculateSimpleSimilarity(news.titleNormalized, existingTitle);
+
+        if (similarity >= 0.65) {
+          // >65% 相似
+          if (news.source === 'HK01') {
+            // HK01 更新，即使相似也顯示
+            continue;
+          }
+          // 其他來源，如果已有 HK01 的報導，則跳過
+          if (SOURCE_PRIORITY[info.source] <= SOURCE_PRIORITY[news.source]) {
+            shouldSkip = true;
+            break;
+          }
+        }
+      }
+
+      if (shouldSkip) {
+        continue;
+      }
+    }
+
+    // 加入顯示列表
+    displayedNews.push(news);
+
+    if (news.clusterId) {
+      displayedClusters.add(news.clusterId);
+    }
+
+    if (news.titleNormalized) {
+      displayedTitles.set(news.titleNormalized, {
+        source: news.source,
+        time: news.publishedAt,
+      });
+    }
+
+    if (displayedNews.length >= limit) {
+      break;
+    }
+  }
+
+  return displayedNews;
+}
+
+/**
+ * 簡化的標題相似度計算（用於快速過濾）
+ */
+function calculateSimpleSimilarity(title1: string, title2: string): number {
+  if (title1 === title2) return 1;
+
+  const len1 = title1.length;
+  const len2 = title2.length;
+  const maxLen = Math.max(len1, len2);
+
+  if (maxLen === 0) return 0;
+
+  // 計算共同字元數
+  const chars1 = new Set(title1);
+  const chars2 = new Set(title2);
+  let common = 0;
+  for (const char of chars1) {
+    if (chars2.has(char)) common++;
+  }
+
+  return common / Math.max(chars1.size, chars2.size);
+}
+
+// ============ 管理員功能 ============
+
+export interface AdminUser {
+  id: number;
+  username: string;
+  displayName: string;
+  isActive: boolean;
+  lastLoginAt: string | null;
+}
+
+export interface NewsSeries {
+  id: number;
+  name: string;
+  description: string | null;
+  color: string;
+  isActive: boolean;
+}
+
+/**
+ * 驗證管理員登入
+ */
+export async function verifyAdminLogin(
+  username: string,
+  password: string
+): Promise<AdminUser | null> {
+  // 使用 btoa 代替 Buffer（瀏覽器兼容）
+  const passwordHash = btoa(password);
+
+  const result = await db.execute({
+    sql: `
+      SELECT id, username, display_name, is_active, last_login_at
+      FROM admin_users
+      WHERE username = ? AND password_hash = ? AND is_active = 1
+    `,
+    args: [username, passwordHash],
+  });
+
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  const row = result.rows[0] as Record<string, unknown>;
+
+  // 更新最後登入時間
+  await db.execute({
+    sql: `UPDATE admin_users SET last_login_at = datetime('now') WHERE id = ?`,
+    args: [row.id as number],
+  });
+
+  return {
+    id: row.id as number,
+    username: row.username as string,
+    displayName: (row.display_name as string) || (row.username as string),
+    isActive: row.is_active === 1,
+    lastLoginAt: row.last_login_at as string | null,
+  };
+}
+
+/**
+ * 獲取所有新聞系列
+ */
+export async function fetchNewsSeries(): Promise<NewsSeries[]> {
+  const result = await db.execute(`
+    SELECT id, name, description, color, is_active
+    FROM news_series
+    WHERE is_active = 1
+    ORDER BY name
+  `);
+
+  return result.rows.map((row) => {
+    const r = row as Record<string, unknown>;
+    return {
+      id: r.id as number,
+      name: r.name as string,
+      description: r.description as string | null,
+      color: r.color as string,
+      isActive: r.is_active === 1,
+    };
+  });
+}
+
+/**
+ * 創建新聞系列
+ */
+export async function createNewsSeries(
+  name: string,
+  description: string | null,
+  color: string
+): Promise<number> {
+  const result = await db.execute({
+    sql: `
+      INSERT INTO news_series (name, description, color)
+      VALUES (?, ?, ?)
+    `,
+    args: [name, description, color],
+  });
+
+  return Number(result.lastInsertRowid);
+}
+
+/**
+ * 刪除新聞系列
+ */
+export async function deleteNewsSeries(seriesId: number): Promise<void> {
+  // 先將使用此系列的文章設為無系列
+  await db.execute({
+    sql: `UPDATE articles SET series_id = NULL WHERE series_id = ?`,
+    args: [seriesId],
+  });
+
+  // 刪除系列
+  await db.execute({
+    sql: `DELETE FROM news_series WHERE id = ?`,
+    args: [seriesId],
+  });
+}
+
+/**
+ * 停用新聞（軟刪除）
+ */
+export async function disableNews(
+  articleId: string,
+  adminUsername: string
+): Promise<void> {
+  await db.execute({
+    sql: `
+      UPDATE articles
+      SET is_disabled = 1, disabled_at = datetime('now'), disabled_by = ?
+      WHERE id = ?
+    `,
+    args: [adminUsername, articleId],
+  });
+}
+
+/**
+ * 恢復新聞
+ */
+export async function enableNews(articleId: string): Promise<void> {
+  await db.execute({
+    sql: `
+      UPDATE articles
+      SET is_disabled = 0, disabled_at = NULL, disabled_by = NULL
+      WHERE id = ?
+    `,
+    args: [articleId],
+  });
+}
+
+/**
+ * 設定新聞系列
+ */
+export async function setNewsSeriesId(
+  articleId: string,
+  seriesId: number | null
+): Promise<void> {
+  await db.execute({
+    sql: `UPDATE articles SET series_id = ? WHERE id = ?`,
+    args: [seriesId, articleId],
+  });
+}
+
+/**
+ * 獲取管理員新聞列表（包含已停用的）
+ */
+export async function fetchNewsForAdmin(
+  limit: number = 50,
+  includeDisabled: boolean = true
+): Promise<(NewsItem & { isDisabled: boolean; seriesId: number | null })[]> {
+  const whereClause = includeDisabled ? '' : 'WHERE COALESCE(a.is_disabled, 0) = 0';
+
+  const result = await db.execute({
+    sql: `
+      SELECT
+        a.*,
+        a.is_disabled,
+        a.series_id,
+        ms.code as source_code,
+        ms.name_zh as source_name,
+        c.code as category_code,
+        c.name_zh as category_name
+      FROM articles a
+      LEFT JOIN media_sources ms ON a.media_source_id = ms.id
+      LEFT JOIN categories c ON a.category_id = c.id
+      ${whereClause}
+      ORDER BY a.published_at DESC
+      LIMIT ?
+    `,
+    args: [limit],
+  });
+
+  return result.rows.map((row) => {
+    const r = row as Record<string, unknown>;
+    return {
+      ...dbToNewsItem(r as unknown as DBArticle),
+      isDisabled: r.is_disabled === 1,
+      seriesId: r.series_id as number | null,
+    };
+  });
+}

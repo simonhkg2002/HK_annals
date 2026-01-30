@@ -53,6 +53,83 @@ interface ParsedArticle {
 }
 
 /**
+ * 延遲函數
+ */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 帶重試的 fetch
+ */
+async function fetchWithRetry(
+  url: string,
+  maxRetries: number = 3
+): Promise<Response | null> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      });
+
+      if (response.ok) {
+        return response;
+      }
+
+      if (response.status === 429) {
+        console.log(`   ⏳ Rate limited, waiting ${attempt * 2}s...`);
+        await delay(attempt * 2000);
+        continue;
+      }
+
+      return null;
+    } catch (error) {
+      if (attempt < maxRetries) {
+        await delay(attempt * 1000);
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * 獲取明報文章全文
+ */
+async function fetchMingPaoContent(url: string): Promise<string | null> {
+  try {
+    const response = await fetchWithRetry(url, 2);
+    if (!response) return null;
+
+    const html = await response.text();
+
+    // 尋找文章內容區塊
+    const contentMatch = html.match(/<div class="article_content"[^>]*>([\s\S]*?)<\/div>/);
+    if (!contentMatch) return null;
+
+    // 清理 HTML
+    const content = contentMatch[1]
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<p[^>]*>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&quot;/g, '"')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    return content || null;
+  } catch (error) {
+    console.log(`   ⚠️ Failed to fetch content for ${url}`);
+    return null;
+  }
+}
+
+/**
  * 解析 RSS XML
  */
 function parseRSS(xml: string): ParsedArticle[] {
@@ -165,13 +242,15 @@ export async function fetchMingPaoRSS(
 export async function scrapeMingPao(options: {
   limit?: number;
   saveToDb?: boolean;
+  fetchContent?: boolean;
 } = {}): Promise<ArticleInsert[]> {
-  const { limit = 30, saveToDb = false } = options;
+  const { limit = 30, saveToDb = false, fetchContent = false } = options;
 
   console.log('🚀 Starting Ming Pao scraper...');
   console.log(`   Category: 港聞 (local)`);
   console.log(`   Limit: ${limit}`);
   console.log(`   Save to DB: ${saveToDb}`);
+  console.log(`   Fetch content: ${fetchContent}`);
   console.log('');
 
   const xml = await fetchMingPaoRSS('local');
@@ -189,8 +268,16 @@ export async function scrapeMingPao(options: {
   }
 
   for (const parsed of parsedArticles) {
+    // 可選：抓取全文
+    let content: string | null = null;
+    if (fetchContent) {
+      console.log(`   📄 Fetching content for: ${parsed.title.substring(0, 30)}...`);
+      content = await fetchMingPaoContent(parsed.url);
+      await delay(300);
+    }
+
     // 生成去重用的 hash 和正規化標題
-    const contentForHash = parsed.title + parsed.description;
+    const contentForHash = parsed.title + (content || parsed.description);
     const contentHash = generateContentHash(contentForHash);
     const titleNormalized = normalizeTitle(parsed.title);
 
@@ -199,7 +286,7 @@ export async function scrapeMingPao(options: {
       original_id: parsed.id,
       original_url: parsed.url,
       title: parsed.title,
-      content: null,
+      content,
       summary: parsed.description,
       published_at: parsed.publishedAt,
       updated_at: null,
@@ -388,7 +475,8 @@ export async function testFetch(): Promise<void> {
 // 直接執行
 const args = process.argv.slice(2);
 if (args.includes('--save')) {
-  scrapeMingPao({ limit: 30, saveToDb: true }).catch(console.error);
+  const fetchContent = args.includes('--content');
+  scrapeMingPao({ limit: 30, saveToDb: true, fetchContent }).catch(console.error);
 } else {
   testFetch().catch(console.error);
 }

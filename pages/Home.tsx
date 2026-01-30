@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { HeroCarousel } from '../components/HeroCarousel';
 import { NewsCard } from '../components/NewsCard';
 import { Button } from '../components/ui/primitives';
-import { fetchLatestNews, fetchNewsByCategory, fetchStats } from '../lib/data';
+import { fetchLatestNews, fetchLatestNewsFiltered, fetchNewsByCategory, fetchStats } from '../lib/data';
 import { NewsItem, NewsCategory } from '../types';
 import { cn } from '../lib/utils';
 import { Loader2 } from 'lucide-react';
@@ -41,7 +41,8 @@ export const Home: React.FC = () => {
       setDisplayCount(ITEMS_PER_PAGE);
       try {
         if (activeCategory === '全部') {
-          const data = await fetchLatestNews(100);
+          // 使用過濾版本，自動過濾 >65% 相似的新聞
+          const data = await fetchLatestNewsFiltered(100);
           setNews(data);
         } else {
           const code = categoryCodeMap[activeCategory] || 'local';
@@ -80,9 +81,51 @@ export const Home: React.FC = () => {
     }, 300);
   };
 
-  const heroNews = news.slice(0, 7);
-  const gridNews = news.slice(7, displayCount + 7);
-  const hasMore = news.length > displayCount + 7;
+  // 來源優先順序：HK01 > 明報 > RTHK
+  const SOURCE_PRIORITY: Record<string, number> = {
+    'HK01': 1,
+    '明報': 2,
+    'RTHK': 3,
+  };
+
+  // Banner 按 3:2:2 比例分配 (HK01: 3, 明報: 2, RTHK: 2)
+  const getHeroNews = () => {
+    const hk01News = news.filter(n => n.source === 'HK01').slice(0, 3);
+    const mingpaoNews = news.filter(n => n.source === '明報').slice(0, 2);
+    const rthkNews = news.filter(n => n.source === 'RTHK').slice(0, 2);
+
+    // 合併並按時間排序
+    const combined = [...hk01News, ...mingpaoNews, ...rthkNews];
+
+    // 如果某來源不足，用其他來源補充（按優先順序）
+    if (combined.length < 7) {
+      const usedIds = new Set(combined.map(n => n.id));
+      const remaining = news
+        .filter(n => !usedIds.has(n.id))
+        .sort((a, b) => (SOURCE_PRIORITY[a.source] || 99) - (SOURCE_PRIORITY[b.source] || 99));
+      combined.push(...remaining.slice(0, 7 - combined.length));
+    }
+
+    // 按發布時間排序
+    return combined.sort((a, b) =>
+      new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
+    ).slice(0, 7);
+  };
+
+  // 排序剩餘新聞（優先顯示 HK01）
+  const getSortedNews = () => {
+    return [...news].sort((a, b) => {
+      const priorityDiff = (SOURCE_PRIORITY[a.source] || 99) - (SOURCE_PRIORITY[b.source] || 99);
+      if (priorityDiff !== 0) return priorityDiff;
+      return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
+    });
+  };
+
+  const heroNews = getHeroNews();
+  const heroIds = new Set(heroNews.map(n => n.id));
+  const remainingNews = getSortedNews().filter(n => !heroIds.has(n.id));
+  const gridNews = remainingNews.slice(0, displayCount);
+  const hasMore = remainingNews.length > displayCount;
 
   const lastUpdate = new Date().toLocaleTimeString('zh-HK', {
     hour: '2-digit',

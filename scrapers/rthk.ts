@@ -94,18 +94,61 @@ function parseArticleList(html: string): ParsedArticle[] {
 }
 
 /**
- * 獲取文章詳情（描述、圖片）
+ * 延遲函數
  */
-async function fetchArticleDetails(url: string): Promise<{ description: string; image: string | null }> {
-  try {
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      },
-    });
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-    if (!response.ok) {
-      return { description: '', image: null };
+/**
+ * 帶重試的 fetch
+ */
+async function fetchWithRetry(
+  url: string,
+  maxRetries: number = 3
+): Promise<Response | null> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      });
+
+      if (response.ok) {
+        return response;
+      }
+
+      // 429 Too Many Requests
+      if (response.status === 429) {
+        console.log(`   ⏳ Rate limited, waiting ${attempt * 2}s...`);
+        await delay(attempt * 2000);
+        continue;
+      }
+
+      return null;
+    } catch (error) {
+      if (attempt < maxRetries) {
+        await delay(attempt * 1000);
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * 獲取文章詳情（描述、圖片、全文）
+ */
+async function fetchArticleDetails(url: string): Promise<{
+  description: string;
+  image: string | null;
+  content: string | null;
+}> {
+  try {
+    const response = await fetchWithRetry(url, 2);
+
+    if (!response) {
+      return { description: '', image: null, content: null };
     }
 
     const html = await response.text();
@@ -114,15 +157,34 @@ async function fetchArticleDetails(url: string): Promise<{ description: string; 
     const descMatch = html.match(/og:description" content="([^"]+)"/);
     const description = descMatch ? descMatch[1] : '';
 
-    // 提取圖片（從 itemImageGallery 或 og:image）
+    // 提取圖片
     const imageMatch = html.match(/og:image" content="([^"]+)"/) ||
                        html.match(/itemImage[^>]*src="([^"]+)"/);
     const image = imageMatch ? imageMatch[1] : null;
 
-    return { description, image };
+    // 提取全文內容
+    let content: string | null = null;
+    const contentMatch = html.match(/<div class="itemFullText"[^>]*>([\s\S]*?)<\/div>/);
+    if (contentMatch) {
+      // 移除 HTML 標籤，保留文字
+      content = contentMatch[1]
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<p[^>]*>/gi, '\n')
+        .replace(/<\/p>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    }
+
+    return { description, image, content };
   } catch (error) {
-    console.error(`   ⚠️ Failed to fetch details for ${url}`);
-    return { description: '', image: null };
+    console.log(`   ⚠️ Failed to fetch details for ${url}`);
+    return { description: '', image: null, content: null };
   }
 }
 
@@ -211,18 +273,21 @@ export async function scrapeRTHK(options: {
   for (const parsed of parsedArticles) {
     let summary = '';
     let thumbnail: string | null = null;
+    let content: string | null = null;
 
     // 可選：獲取文章詳情
     if (fetchDetails) {
+      console.log(`   📄 Fetching details for: ${parsed.title.substring(0, 30)}...`);
       const details = await fetchArticleDetails(parsed.url);
       summary = details.description;
       thumbnail = details.image;
+      content = details.content;
       // 避免請求過快
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await delay(300);
     }
 
     // 生成去重用的 hash 和正規化標題
-    const contentForHash = parsed.title + summary;
+    const contentForHash = parsed.title + (content || summary);
     const contentHash = generateContentHash(contentForHash);
     const titleNormalized = normalizeTitle(parsed.title);
 
@@ -231,7 +296,7 @@ export async function scrapeRTHK(options: {
       original_id: parsed.id,
       original_url: parsed.url,
       title: parsed.title,
-      content: null,
+      content,
       summary,
       published_at: new Date(parsed.publishedAt).toISOString(),
       updated_at: null,

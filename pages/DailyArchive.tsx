@@ -148,7 +148,7 @@ export const DailyArchive: React.FC = () => {
               <p className="text-sm mt-2">資料從 2026 年 1 月開始收集</p>
             </div>
           ) : (
-            Object.entries(groupedNews)
+            (Object.entries(groupedNews) as [string, { items: NewsItem[]; hour: number }][])
               .sort(([, a], [, b]) => b.hour - a.hour)
               .map(([time, { items }]) => (
                 <div key={time} className="relative pl-8 border-l border-border/50">
