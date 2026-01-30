@@ -152,21 +152,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
     }
   };
 
-  // 創建新系列
+  // 創建新系列（新建的放在最前面）
   const handleCreateSeries = async () => {
     if (!newSeriesName.trim()) return;
 
     try {
       const id = await createNewsSeries(newSeriesName, newSeriesDesc || null, newSeriesColor);
       setSeries((prev) => [
-        ...prev,
         {
           id,
           name: newSeriesName,
           description: newSeriesDesc || null,
           color: newSeriesColor,
           isActive: true,
+          createdAt: new Date().toISOString(),
         },
+        ...prev,
       ]);
       setNewSeriesName('');
       setNewSeriesDesc('');

@@ -443,6 +443,7 @@ export interface NewsSeries {
   description: string | null;
   color: string;
   isActive: boolean;
+  createdAt?: string | null;
 }
 
 /**
@@ -486,14 +487,14 @@ export async function verifyAdminLogin(
 }
 
 /**
- * 獲取所有新聞系列
+ * 獲取所有新聞系列（按建立時間倒序，最新的在前）
  */
 export async function fetchNewsSeries(): Promise<NewsSeries[]> {
   const result = await db.execute(`
-    SELECT id, name, description, color, is_active
+    SELECT id, name, description, color, is_active, created_at
     FROM news_series
     WHERE is_active = 1
-    ORDER BY name
+    ORDER BY created_at DESC
   `);
 
   return result.rows.map((row) => {
@@ -504,6 +505,7 @@ export async function fetchNewsSeries(): Promise<NewsSeries[]> {
       description: r.description as string | null,
       color: r.color as string,
       isActive: r.is_active === 1,
+      createdAt: r.created_at as string | null,
     };
   });
 }
