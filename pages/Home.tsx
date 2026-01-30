@@ -103,18 +103,28 @@ export const Home: React.FC = () => {
 
   const heroNews = getHeroNews();
 
-  // 計算 Banner 實際顯示的新聞 ID (HK01: 3, Yahoo: 2, 明報: 2, RTHK: 2)
+  // 計算 Banner 實際顯示的新聞 ID (HK01: 4, 其他來源: 最近2小時內最多2則)
   const getHeroDisplayedIds = () => {
     const grouped: Record<string, NewsItem[]> = {};
     for (const item of heroNews) {
       if (!grouped[item.source]) grouped[item.source] = [];
       grouped[item.source].push(item);
     }
+
+    // 檢查是否在 2 小時內
+    const isRecent = (publishedAt: string) => {
+      const publishTime = new Date(publishedAt).getTime();
+      const now = Date.now();
+      return now - publishTime <= 2 * 60 * 60 * 1000;
+    };
+
     const displayedIds = new Set<string>();
-    (grouped['HK01'] || []).slice(0, 3).forEach(n => displayedIds.add(n.id));
-    (grouped['Yahoo新聞'] || []).slice(0, 2).forEach(n => displayedIds.add(n.id));
-    (grouped['明報'] || []).slice(0, 2).forEach(n => displayedIds.add(n.id));
-    (grouped['RTHK'] || []).slice(0, 2).forEach(n => displayedIds.add(n.id));
+    // HK01: 最新 4 則（不限時間）
+    (grouped['HK01'] || []).slice(0, 4).forEach(n => displayedIds.add(n.id));
+    // 其他來源: 只計算最近 2 小時內的
+    (grouped['Yahoo新聞'] || []).filter(n => isRecent(n.publishedAt)).slice(0, 2).forEach(n => displayedIds.add(n.id));
+    (grouped['明報'] || []).filter(n => isRecent(n.publishedAt)).slice(0, 2).forEach(n => displayedIds.add(n.id));
+    (grouped['RTHK'] || []).filter(n => isRecent(n.publishedAt)).slice(0, 2).forEach(n => displayedIds.add(n.id));
     return displayedIds;
   };
 

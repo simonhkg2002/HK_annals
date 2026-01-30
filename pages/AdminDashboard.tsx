@@ -527,17 +527,51 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
               </div>
               <div>
                 <label className="text-sm font-medium">顏色</label>
-                <div className="flex items-center gap-2 mt-1">
-                  <input
-                    type="color"
-                    value={newSeriesColor}
-                    onChange={(e) => setNewSeriesColor(e.target.value)}
-                    className="w-10 h-10 rounded cursor-pointer"
-                  />
+                {/* 預設顏色選項 */}
+                <div className="flex flex-wrap gap-2 mt-2 mb-3">
+                  {[
+                    '#3B82F6', // 藍色
+                    '#EF4444', // 紅色
+                    '#10B981', // 綠色
+                    '#F59E0B', // 橙色
+                    '#8B5CF6', // 紫色
+                    '#EC4899', // 粉紅
+                    '#06B6D4', // 青色
+                    '#6366F1', // 靛藍
+                  ].map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      onClick={() => setNewSeriesColor(color)}
+                      className={`w-8 h-8 rounded-full border-2 transition-all hover:scale-110 ${
+                        newSeriesColor === color
+                          ? 'border-foreground ring-2 ring-offset-2 ring-foreground/30'
+                          : 'border-transparent'
+                      }`}
+                      style={{ backgroundColor: color }}
+                      title={color}
+                    />
+                  ))}
+                </div>
+                {/* 自訂顏色 */}
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <input
+                      type="color"
+                      value={newSeriesColor}
+                      onChange={(e) => setNewSeriesColor(e.target.value)}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                    <div
+                      className="w-10 h-10 rounded-lg border-2 border-muted cursor-pointer"
+                      style={{ backgroundColor: newSeriesColor }}
+                    />
+                  </div>
                   <Input
                     value={newSeriesColor}
                     onChange={(e) => setNewSeriesColor(e.target.value)}
-                    className="flex-1"
+                    placeholder="#000000"
+                    className="flex-1 font-mono"
                   />
                 </div>
               </div>

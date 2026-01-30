@@ -9,6 +9,14 @@ interface HeroCarouselProps {
   news: NewsItem[];
 }
 
+// 檢查是否在指定小時內
+function isWithinHours(publishedAt: string, hours: number): boolean {
+  const publishTime = new Date(publishedAt).getTime();
+  const now = Date.now();
+  const hoursInMs = hours * 60 * 60 * 1000;
+  return now - publishTime <= hoursInMs;
+}
+
 export const HeroCarousel: React.FC<HeroCarouselProps> = ({ news }) => {
   const [current, setCurrent] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
@@ -22,19 +30,21 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({ news }) => {
     groupedNews[item.source].push(item);
   }
 
-  // 各報章新聞 (按時間排序)
+  // HK01: 最新 4 則（不限時間）
   const hk01News = (groupedNews['HK01'] || [])
     .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
-    .slice(0, 3);
-  const yahooNews = (groupedNews['Yahoo新聞'] || [])
-    .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
-    .slice(0, 2);
-  const mingpaoNews = (groupedNews['明報'] || [])
-    .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
-    .slice(0, 2);
-  const rthkNews = (groupedNews['RTHK'] || [])
-    .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
-    .slice(0, 2);
+    .slice(0, 4);
+
+  // 其他來源: 只顯示最近 2 小時內的新聞
+  const filterRecent = (items: NewsItem[]) =>
+    items
+      .filter((item) => isWithinHours(item.publishedAt, 2))
+      .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
+      .slice(0, 2);
+
+  const yahooNews = filterRecent(groupedNews['Yahoo新聞'] || []);
+  const mingpaoNews = filterRecent(groupedNews['明報'] || []);
+  const rthkNews = filterRecent(groupedNews['RTHK'] || []);
 
   useEffect(() => {
     if (isPaused || hk01News.length === 0) return;
@@ -52,15 +62,16 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({ news }) => {
 
   const currentNews = hk01News[current];
 
-  // 渲染報章欄位
+  // 渲染報章欄位（最近 2 小時新聞）
   const renderSourceColumn = (
     sourceNews: NewsItem[],
     sourceName: string,
     headerColor: string
   ) => (
     <div className="flex flex-col h-full">
-      <div className={cn('px-2 py-1.5 text-xs font-medium border-b', headerColor)}>
-        {sourceName}
+      <div className={cn('px-2 py-1.5 text-xs font-medium border-b flex items-center justify-between', headerColor)}>
+        <span>{sourceName}</span>
+        <span className="text-[10px] opacity-70">近 2 小時</span>
       </div>
       <div className="flex-1 divide-y">
         {sourceNews.length > 0 ? (
@@ -80,7 +91,9 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({ news }) => {
             </Link>
           ))
         ) : (
-          <div className="p-2 text-xs text-muted-foreground">暫無新聞</div>
+          <div className="flex-1 flex items-center justify-center p-4">
+            <p className="text-xs text-muted-foreground text-center">暫無新聞</p>
+          </div>
         )}
       </div>
     </div>
@@ -91,7 +104,7 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({ news }) => {
       <div className="container mx-auto px-4 py-4">
         {/* 9 欄網格: HK01(3) + Yahoo(2) + 明報(2) + RTHK(2) */}
         <div className="grid grid-cols-1 lg:grid-cols-9 gap-3">
-          {/* HK01 輪播區 - 3 欄 */}
+          {/* HK01 輪播區 - 3 欄，顯示最新 4 則 */}
           <div
             className="lg:col-span-3"
             onMouseEnter={() => setIsPaused(true)}
@@ -176,7 +189,7 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({ news }) => {
             </Card>
           </div>
 
-          {/* Yahoo 新聞 - 2 欄 */}
+          {/* Yahoo 新聞 - 2 欄（最近 2 小時） */}
           <div className="lg:col-span-2">
             <Card className="h-full overflow-hidden">
               {renderSourceColumn(
@@ -187,7 +200,7 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({ news }) => {
             </Card>
           </div>
 
-          {/* 明報 - 2 欄 */}
+          {/* 明報 - 2 欄（最近 2 小時） */}
           <div className="lg:col-span-2">
             <Card className="h-full overflow-hidden">
               {renderSourceColumn(
@@ -198,7 +211,7 @@ export const HeroCarousel: React.FC<HeroCarouselProps> = ({ news }) => {
             </Card>
           </div>
 
-          {/* RTHK - 2 欄 */}
+          {/* RTHK - 2 欄（最近 2 小時） */}
           <div className="lg:col-span-2">
             <Card className="h-full overflow-hidden">
               {renderSourceColumn(
