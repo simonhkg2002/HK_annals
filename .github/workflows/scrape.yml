@@ -15,6 +15,7 @@ on:
         options:
           - all
           - hk01
+          - yahoo
           - rthk
           - mingpao
 
@@ -43,6 +44,14 @@ jobs:
       - name: Run HK01 scraper
         if: ${{ github.event.inputs.source == 'all' || github.event.inputs.source == 'hk01' || github.event_name == 'schedule' }}
         run: npm run scrape:hk01:full
+        continue-on-error: true
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+
+      - name: Run Yahoo scraper
+        if: ${{ github.event.inputs.source == 'all' || github.event.inputs.source == 'yahoo' || github.event_name == 'schedule' }}
+        run: npm run scrape:yahoo:full
         continue-on-error: true
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}

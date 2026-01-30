@@ -4,6 +4,7 @@
  */
 
 import { scrapeHK01 } from './hk01';
+import { scrapeYahoo } from './yahoo';
 // import { scrapeHKFP } from './hkfp';
 
 interface ScraperResult {
@@ -63,7 +64,15 @@ async function main() {
   // HK01
   if (source === 'all' || source === 'hk01') {
     const result = await runScraper('HK01', () =>
-      scrapeHK01({ limit: 30, saveToDb: true })
+      scrapeHK01({ limit: 30, saveToDb: true, fetchContent: true })
+    );
+    results.push(result);
+  }
+
+  // Yahoo
+  if (source === 'all' || source === 'yahoo') {
+    const result = await runScraper('Yahoo', () =>
+      scrapeYahoo({ limit: 30, saveToDb: true, fetchContent: true })
     );
     results.push(result);
   }

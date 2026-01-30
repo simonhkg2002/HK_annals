@@ -150,6 +150,56 @@ async function fetchMingPaoContent(url: string): Promise<string | null> {
   }
 }
 
+async function fetchYahooContent(url: string): Promise<string | null> {
+  try {
+    const response = await fetchWithRetry(url);
+    if (!response) return null;
+
+    const html = await response.text();
+
+    // 方法 1: 從 caas-body 提取內容
+    const bodyMatch = html.match(/<div class="caas-body"[^>]*>([\s\S]*?)<\/div>\s*<div class="caas-/);
+    if (bodyMatch) {
+      return bodyMatch[1]
+        .replace(/<p[^>]*>/gi, '\n')
+        .replace(/<\/p>/gi, '\n')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, '&')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    }
+
+    // 方法 2: 從文章段落提取
+    const paragraphs: string[] = [];
+    const pMatches = html.matchAll(/<p class="[^"]*"[^>]*>([^<]+)<\/p>/g);
+    for (const match of pMatches) {
+      const text = match[1].trim();
+      if (text.length > 20) {
+        paragraphs.push(text);
+      }
+    }
+    if (paragraphs.length > 0) {
+      return paragraphs.join('\n\n');
+    }
+
+    // 方法 3: og:description
+    const descMatch = html.match(/og:description" content="([^"]+)"/);
+    if (descMatch) {
+      return descMatch[1]
+        .replace(/&amp;/g, '&')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'");
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function backfill(limit = 50) {
   console.log('🔄 Backfilling content for existing articles...\n');
 
@@ -187,6 +237,8 @@ async function backfill(limit = 50) {
       content = await fetchRTHKContent(url);
     } else if (source === 'mingpao') {
       content = await fetchMingPaoContent(url);
+    } else if (source === 'yahoo') {
+      content = await fetchYahooContent(url);
     }
 
     if (content) {

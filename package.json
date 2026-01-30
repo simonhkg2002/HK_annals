@@ -19,7 +19,11 @@
     "scrape:mingpao": "tsx scrapers/mingpao.ts",
     "scrape:mingpao:save": "tsx scrapers/mingpao.ts --save",
     "scrape:mingpao:full": "tsx scrapers/mingpao.ts --save --content",
+    "scrape:yahoo": "tsx scrapers/yahoo.ts",
+    "scrape:yahoo:save": "tsx scrapers/yahoo.ts --save",
+    "scrape:yahoo:full": "tsx scrapers/yahoo.ts --save --content",
     "db:migrate:dedup": "tsx lib/migrate-dedup.ts",
+    "db:migrate:yahoo": "tsx lib/migrate-yahoo.ts",
     "backfill:content": "tsx scrapers/backfill-content.ts"
   },
   "dependencies": {

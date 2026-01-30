@@ -37,4 +37,5 @@ export const sourceColors: Record<string, string> = {
   'SCMP': 'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-100',
   'RTHK': 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100',
   'HKTV': 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-100',
+  'Yahoo新聞': 'bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-100',
 };

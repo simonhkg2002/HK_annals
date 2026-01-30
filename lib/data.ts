@@ -320,11 +320,12 @@ interface NewsItemWithCluster extends NewsItem {
   titleNormalized?: string;
 }
 
-// 來源優先順序
+// 來源優先順序: HK01 > Yahoo > 明報 > RTHK
 const SOURCE_PRIORITY: Record<string, number> = {
   'HK01': 1,
-  '明報': 2,
-  'RTHK': 3,
+  'Yahoo新聞': 2,
+  '明報': 3,
+  'RTHK': 4,
 };
 
 /**
