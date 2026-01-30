@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Menu, Search, Sun, Moon, Shield, X, Newspaper } from 'lucide-react';
+import { Menu, Search, Sun, Moon, Shield, X, Newspaper, GitBranch } from 'lucide-react';
 import { Button, Input } from './ui/primitives';
 import { cn } from '../lib/utils';
 
@@ -18,6 +18,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     { name: '首頁', path: '/' },
     { name: '日報檔案', path: '/daily' },
     { name: '媒體專區', path: '/media' },
+    { name: '系列追蹤', path: '/series', icon: GitBranch },
   ];
 
   const isActive = (path: string) => {

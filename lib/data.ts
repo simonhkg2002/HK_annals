@@ -509,6 +509,34 @@ export async function fetchNewsSeries(): Promise<NewsSeries[]> {
 }
 
 /**
+ * 獲取指定系列的新聞
+ */
+export async function fetchNewsBySeries(
+  seriesId: number,
+  limit: number = 50
+): Promise<NewsItem[]> {
+  const result = await db.execute({
+    sql: `
+      SELECT
+        a.*,
+        ms.code as source_code,
+        ms.name_zh as source_name,
+        c.code as category_code,
+        c.name_zh as category_name
+      FROM articles a
+      LEFT JOIN media_sources ms ON a.media_source_id = ms.id
+      LEFT JOIN categories c ON a.category_id = c.id
+      WHERE a.series_id = ? AND COALESCE(a.is_disabled, 0) = 0
+      ORDER BY a.published_at ASC
+      LIMIT ?
+    `,
+    args: [seriesId, limit],
+  });
+
+  return result.rows.map((row) => dbToNewsItem(row as unknown as DBArticle));
+}
+
+/**
  * 創建新聞系列
  */
 export async function createNewsSeries(

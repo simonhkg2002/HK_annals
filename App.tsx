@@ -4,6 +4,7 @@ import { Layout } from './components/Layout';
 import { Home } from './pages/Home';
 import { DailyArchive } from './pages/DailyArchive';
 import { MediaPage } from './pages/MediaPage';
+import { SeriesBoard } from './pages/SeriesBoard';
 import { AdminLogin } from './pages/AdminLogin';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { NewsDetail } from './pages/NewsDetail';
@@ -44,6 +45,7 @@ function App() {
           <Route path="/news/:id" element={<NewsDetail />} />
           <Route path="/daily" element={<DailyArchive />} />
           <Route path="/media" element={<MediaPage />} />
+          <Route path="/series" element={<SeriesBoard />} />
           <Route
             path="/admin/login"
             element={
