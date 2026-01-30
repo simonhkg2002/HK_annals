@@ -447,14 +447,25 @@ export interface NewsSeries {
 }
 
 /**
+ * 使用 SHA-256 雜湊密碼（瀏覽器兼容）
+ */
+async function hashPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
  * 驗證管理員登入
  */
 export async function verifyAdminLogin(
   username: string,
   password: string
 ): Promise<AdminUser | null> {
-  // 使用 btoa 代替 Buffer（瀏覽器兼容）
-  const passwordHash = btoa(password);
+  // 使用 SHA-256 雜湊密碼
+  const passwordHash = await hashPassword(password);
 
   const result = await db.execute({
     sql: `

@@ -83,13 +83,14 @@ async function migrate() {
     console.log('  ✓ All indexes created');
 
     // 5. 插入預設管理員帳號 (admin/admin)
-    // 注意：這是簡單的 hash，生產環境應使用 bcrypt
+    // 使用 SHA-256 雜湊密碼
     console.log('\n🔐 Creating default admin user...');
-    const simpleHash = Buffer.from('admin').toString('base64'); // 簡單編碼，僅供示範
+    const crypto = await import('crypto');
+    const passwordHash = crypto.createHash('sha256').update('admin').digest('hex');
     await db.execute({
       sql: `INSERT OR IGNORE INTO admin_users (username, password_hash, display_name)
             VALUES (?, ?, ?)`,
-      args: ['admin', simpleHash, '系統管理員']
+      args: ['admin', passwordHash, '系統管理員']
     });
     console.log('  ✓ Default admin created (admin/admin)');
 

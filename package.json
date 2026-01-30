@@ -24,6 +24,8 @@
     "scrape:yahoo:full": "tsx server/scrapers/yahoo.ts --save --content",
     "db:migrate:dedup": "tsx server/migrations/migrate-dedup.ts",
     "db:migrate:yahoo": "tsx server/migrations/migrate-yahoo.ts",
+    "db:migrate:admin": "tsx server/migrations/migrate-admin.ts",
+    "db:migrate:password": "tsx server/migrations/migrate-password-hash.ts",
     "backfill:content": "tsx server/scrapers/backfill-content.ts"
   },
   "dependencies": {
