@@ -14,6 +14,7 @@ import {
   deleteNewsSeries,
   AdminUser,
   NewsSeries,
+  NewsItemWithSimilarity,
 } from '../lib/data';
 import { Button, Input, Card, Badge } from '../components/ui/primitives';
 import {
@@ -31,6 +32,7 @@ import {
   Bookmark,
   ChevronLeft,
   ChevronRight,
+  Copy,
 } from 'lucide-react';
 import {
   LineChart,
@@ -49,7 +51,7 @@ interface AdminDashboardProps {
   onLogout: () => void;
 }
 
-type NewsItemWithAdmin = NewsItem & { isDisabled: boolean; seriesId: number | null };
+type NewsItemWithAdmin = NewsItemWithSimilarity;
 
 const PAGE_SIZE = 100;
 const BOOKMARK_KEY = 'admin_bookmark_article_id';
@@ -288,7 +290,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
       ) : (
         <>
           {/* 統計卡片 */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
             <Card className="p-6">
               <h3 className="text-sm font-medium text-muted-foreground mb-2">總新聞數</h3>
               <div className="text-3xl font-bold">{stats?.totalArticles ?? 0}</div>
@@ -302,6 +304,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
             <Card className="p-6">
               <h3 className="text-sm font-medium text-muted-foreground mb-2">新聞系列</h3>
               <div className="text-3xl font-bold">{series.length}</div>
+            </Card>
+            <Card className="p-6">
+              <h3 className="text-sm font-medium text-muted-foreground mb-2">本頁相似文章</h3>
+              <div className="text-3xl font-bold text-rose-500">
+                {news.filter(n => n.isSimilarDuplicate).length}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">±2小時內相似</p>
             </Card>
             <Card className="p-6">
               <h3 className="text-sm font-medium text-muted-foreground mb-2">系統狀態</h3>
@@ -430,21 +439,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
                       className={`border-b hover:bg-muted/30 transition-colors ${
                         item.isDisabled
                           ? 'bg-red-50/50 opacity-60'
+                          : item.isSimilarDuplicate
+                          ? 'bg-rose-50/70 border-l-4 border-l-rose-300'
                           : bookmarkedArticleId === item.id
                           ? 'bg-amber-50/50 border-l-4 border-l-amber-500'
                           : 'bg-background'
                       }`}
+                      title={item.isSimilarDuplicate ? `與其他文章相似（優先顯示高優先級來源）` : undefined}
                     >
                       <td className="px-4 py-4">
-                        {item.isDisabled ? (
-                          <Badge variant="destructive" className="text-xs">
-                            已停用
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-xs text-green-600 border-green-600">
-                            顯示中
-                          </Badge>
-                        )}
+                        <div className="flex flex-col gap-1">
+                          {item.isDisabled ? (
+                            <Badge variant="destructive" className="text-xs">
+                              已停用
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-xs text-green-600 border-green-600">
+                              顯示中
+                            </Badge>
+                          )}
+                          {item.isSimilarDuplicate && (
+                            <Badge className="text-xs bg-rose-100 text-rose-700 border-rose-300">
+                              相似
+                            </Badge>
+                          )}
+                        </div>
                       </td>
                       <td
                         className="px-4 py-4 font-medium max-w-[300px] truncate"

@@ -629,14 +629,37 @@ export async function setNewsSeriesId(
   });
 }
 
+// 媒體優先順序（數字越小優先級越高）
+const SOURCE_PRIORITY: Record<string, number> = {
+  'HK01': 1,
+  'Yahoo': 2,
+  'RTHK': 3,
+  '明報': 4,
+};
+
 /**
- * 獲取管理員新聞列表（包含已停用的，支援分頁）
+ * 獲取媒體優先級
+ */
+function getSourcePriority(source: string): number {
+  return SOURCE_PRIORITY[source] ?? 99;
+}
+
+export interface NewsItemWithSimilarity extends NewsItem {
+  isDisabled: boolean;
+  seriesId: number | null;
+  isSimilarDuplicate: boolean; // 是否為相似重複文章（低優先級）
+  similarToId: string | null;  // 相似的原始文章 ID
+  titleNormalized: string | null;
+}
+
+/**
+ * 獲取管理員新聞列表（包含已停用的，支援分頁，含相似度檢測）
  */
 export async function fetchNewsForAdmin(
   limit: number = 50,
   includeDisabled: boolean = true,
   offset: number = 0
-): Promise<(NewsItem & { isDisabled: boolean; seriesId: number | null })[]> {
+): Promise<NewsItemWithSimilarity[]> {
   const whereClause = includeDisabled ? '' : 'WHERE COALESCE(a.is_disabled, 0) = 0';
 
   const result = await db.execute({
@@ -645,6 +668,8 @@ export async function fetchNewsForAdmin(
         a.*,
         a.is_disabled,
         a.series_id,
+        a.title_normalized,
+        a.cluster_id,
         ms.code as source_code,
         ms.name_zh as source_name,
         c.code as category_code,
@@ -659,14 +684,74 @@ export async function fetchNewsForAdmin(
     args: [limit, offset],
   });
 
-  return result.rows.map((row) => {
+  const newsItems = result.rows.map((row) => {
     const r = row as Record<string, unknown>;
     return {
       ...dbToNewsItem(r as unknown as DBArticle),
       isDisabled: r.is_disabled === 1,
       seriesId: r.series_id as number | null,
+      isSimilarDuplicate: false,
+      similarToId: null as string | null,
+      titleNormalized: r.title_normalized as string | null,
+      clusterId: r.cluster_id as string | null,
+      publishedAtTime: new Date(r.published_at as string).getTime(),
     };
   });
+
+  // 檢測 ±2 小時內的相似文章
+  const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+
+  for (let i = 0; i < newsItems.length; i++) {
+    const current = newsItems[i];
+    if (current.isSimilarDuplicate) continue; // 已標記為重複，跳過
+
+    // 查找 ±2 小時內的相似文章
+    for (let j = 0; j < newsItems.length; j++) {
+      if (i === j) continue;
+      const other = newsItems[j];
+      if (other.isSimilarDuplicate) continue;
+
+      // 檢查時間差是否在 ±2 小時內
+      const timeDiff = Math.abs(current.publishedAtTime - other.publishedAtTime);
+      if (timeDiff > TWO_HOURS_MS) continue;
+
+      // 檢查相似度（使用 cluster_id 或 title_normalized）
+      let isSimilar = false;
+
+      // 優先使用 cluster_id
+      if (current.clusterId && other.clusterId && current.clusterId === other.clusterId) {
+        isSimilar = true;
+      }
+      // 其次使用 title_normalized 相似度
+      else if (current.titleNormalized && other.titleNormalized) {
+        const similarity = calculateSimpleSimilarity(current.titleNormalized, other.titleNormalized);
+        if (similarity >= 0.65) {
+          isSimilar = true;
+        }
+      }
+
+      if (isSimilar) {
+        // 比較優先級，標記低優先級的為重複
+        const currentPriority = getSourcePriority(current.source);
+        const otherPriority = getSourcePriority(other.source);
+
+        if (currentPriority > otherPriority) {
+          // current 優先級較低，標記為重複
+          current.isSimilarDuplicate = true;
+          current.similarToId = other.id;
+          break; // current 已標記，跳出內層循環
+        } else if (otherPriority > currentPriority) {
+          // other 優先級較低，標記為重複
+          other.isSimilarDuplicate = true;
+          other.similarToId = current.id;
+        }
+        // 優先級相同則都不標記
+      }
+    }
+  }
+
+  // 移除臨時屬性，返回結果
+  return newsItems.map(({ publishedAtTime, clusterId, ...rest }) => rest);
 }
 
 /**

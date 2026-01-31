@@ -31,6 +31,7 @@ export const SeriesBoard: React.FC = () => {
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [panning, setPanning] = useState(false);
   const [lastMousePos, setLastMousePos] = useState({ x: 0, y: 0 });
+  const [boardSize, setBoardSize] = useState({ width: 2000, height: 2000 });
 
   const boardRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -60,7 +61,7 @@ export const SeriesBoard: React.FC = () => {
     const loadNews = async () => {
       setLoadingNews(true);
       try {
-        const data = await fetchNewsBySeries(selectedSeriesId, 50);
+        const data = await fetchNewsBySeries(selectedSeriesId, 200); // 增加到 200 篇
         setNews(data);
 
         // 根據時間線佈局節點 - 更緊湊的網格佈局
@@ -73,8 +74,8 @@ export const SeriesBoard: React.FC = () => {
           const cardWidth = 320;
           const cardHeight = 280;
           const horizontalGap = 120; // 水平間距（用於連線）
-          const verticalGap = 80;    // 垂直間距
-          const cols = Math.min(4, Math.ceil(Math.sqrt(sortedNews.length))); // 最多4列
+          const verticalGap = 100;    // 垂直間距（增加以容納時間標籤）
+          const cols = Math.min(5, Math.max(3, Math.ceil(Math.sqrt(sortedNews.length)))); // 3-5 列
           const startX = 100;
           const startY = 100;
 
@@ -105,8 +106,20 @@ export const SeriesBoard: React.FC = () => {
           }
           setConnections(newConnections);
 
-          // 重置視圖 - 預設較大比例
-          setScale(1);
+          // 計算實際需要的 board 大小
+          const totalRows = Math.ceil(sortedNews.length / cols);
+          const boardWidth = startX + cols * (cardWidth + horizontalGap) + 200;
+          const boardHeight = startY + totalRows * (cardHeight + verticalGap) + 150;
+          setBoardSize({ width: boardWidth, height: boardHeight });
+
+          // 計算適合的初始縮放比例
+          const viewportHeight = window.innerHeight - 150; // 減去頂部工具列
+          const viewportWidth = window.innerWidth;
+          const scaleForHeight = viewportHeight / boardHeight;
+          const scaleForWidth = viewportWidth / boardWidth;
+          const optimalScale = Math.min(1, Math.max(0.3, Math.min(scaleForHeight, scaleForWidth) * 0.9));
+
+          setScale(optimalScale);
           setOffset({ x: 0, y: 0 });
         }
       } catch (error) {
@@ -141,12 +154,18 @@ export const SeriesBoard: React.FC = () => {
 
   // 縮放
   const handleZoom = (delta: number) => {
-    setScale(prev => Math.max(0.3, Math.min(2, prev + delta)));
+    setScale(prev => Math.max(0.15, Math.min(2, prev + delta)));
   };
 
   // 重置視圖
   const handleReset = () => {
-    setScale(0.8);
+    // 計算適合的縮放比例
+    const viewportHeight = window.innerHeight - 150;
+    const viewportWidth = window.innerWidth;
+    const scaleForHeight = viewportHeight / boardSize.height;
+    const scaleForWidth = viewportWidth / boardSize.width;
+    const optimalScale = Math.min(1, Math.max(0.3, Math.min(scaleForHeight, scaleForWidth) * 0.9));
+    setScale(optimalScale);
     setOffset({ x: 0, y: 0 });
   };
 
@@ -159,7 +178,7 @@ export const SeriesBoard: React.FC = () => {
       e.preventDefault();
       e.stopPropagation();
       const delta = e.deltaY > 0 ? -0.1 : 0.1;
-      setScale(prev => Math.max(0.3, Math.min(2, prev + delta)));
+      setScale(prev => Math.max(0.15, Math.min(2, prev + delta)));
     };
 
     container.addEventListener('wheel', handleWheel, { passive: false });
@@ -270,11 +289,17 @@ export const SeriesBoard: React.FC = () => {
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
       >
-        {/* 軟木板紋理覆蓋 */}
+        {/* 軟木板紋理覆蓋 - 簡化版提升性能 */}
         <div
-          className="absolute inset-0 pointer-events-none opacity-30 board-bg"
+          className="absolute inset-0 pointer-events-none opacity-10"
           style={{
-            backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.4'/%3E%3C/svg%3E")`,
+            backgroundImage: `repeating-linear-gradient(
+              45deg,
+              transparent,
+              transparent 2px,
+              rgba(139, 90, 43, 0.1) 2px,
+              rgba(139, 90, 43, 0.1) 4px
+            )`,
           }}
         />
 
@@ -292,19 +317,20 @@ export const SeriesBoard: React.FC = () => {
         ) : (
           <div
             ref={boardRef}
-            className="absolute board-bg"
+            className="absolute"
             style={{
               transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
               transformOrigin: 'top left',
-              width: '2000px',
-              height: '2000px',
+              width: `${boardSize.width}px`,
+              height: `${boardSize.height}px`,
               cursor: panning ? 'grabbing' : 'grab',
+              willChange: 'transform',
             }}
           >
             {/* SVG 連接線 */}
             <svg
               className="absolute inset-0 pointer-events-none"
-              style={{ width: '100%', height: '100%' }}
+              style={{ width: '100%', height: '100%', willChange: 'transform' }}
             >
               <defs>
                 {/* 紅線漸層 */}
