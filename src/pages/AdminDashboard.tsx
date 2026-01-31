@@ -310,7 +310,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
               <div className="text-3xl font-bold text-rose-500">
                 {news.filter(n => n.isSimilarDuplicate).length}
               </div>
-              <p className="text-xs text-muted-foreground mt-1">±2小時內相似</p>
+              <p className="text-xs text-muted-foreground mt-1">±6小時內相似</p>
             </Card>
             <Card className="p-6">
               <h3 className="text-sm font-medium text-muted-foreground mb-2">系統狀態</h3>

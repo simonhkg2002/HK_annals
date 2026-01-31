@@ -321,7 +321,7 @@ interface NewsItemWithCluster extends NewsItem {
 }
 
 /**
- * 獲取首頁新聞（過濾 >65% 相似的新聞）
+ * 獲取首頁新聞（過濾 >40% 相似的新聞）
  * 邏輯：按發布時間排序，過濾掉相似的重複報導
  */
 export async function fetchLatestNewsFiltered(limit: number = 50): Promise<NewsItem[]> {
@@ -373,8 +373,8 @@ export async function fetchLatestNewsFiltered(limit: number = 50): Promise<NewsI
       for (const existingTitle of displayedTitles.keys()) {
         const similarity = calculateSimpleSimilarity(news.titleNormalized, existingTitle);
 
-        if (similarity >= 0.65) {
-          // >65% 相似，跳過（保留先出現的，即較新的）
+        if (similarity >= 0.40) {
+          // >40% 相似，跳過（保留先出現的，即較新的）
           shouldSkip = true;
           break;
         }
@@ -405,10 +405,11 @@ export async function fetchLatestNewsFiltered(limit: number = 50): Promise<NewsI
 }
 
 /**
- * 簡化的標題相似度計算（用於快速過濾）
+ * 簡化的標題相似度計算（字符集合比較）
  */
 function calculateSimpleSimilarity(title1: string, title2: string): number {
   if (title1 === title2) return 1;
+  if (!title1 || !title2) return 0;
 
   const len1 = title1.length;
   const len2 = title2.length;
@@ -698,8 +699,8 @@ export async function fetchNewsForAdmin(
     };
   });
 
-  // 檢測 ±2 小時內的相似文章
-  const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+  // 檢測 ±6 小時內的相似文章
+  const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 
   for (let i = 0; i < newsItems.length; i++) {
     const current = newsItems[i];
@@ -713,7 +714,7 @@ export async function fetchNewsForAdmin(
 
       // 檢查時間差是否在 ±2 小時內
       const timeDiff = Math.abs(current.publishedAtTime - other.publishedAtTime);
-      if (timeDiff > TWO_HOURS_MS) continue;
+      if (timeDiff > SIX_HOURS_MS) continue;
 
       // 檢查相似度（使用 cluster_id 或 title_normalized）
       let isSimilar = false;
@@ -725,7 +726,7 @@ export async function fetchNewsForAdmin(
       // 其次使用 title_normalized 相似度
       else if (current.titleNormalized && other.titleNormalized) {
         const similarity = calculateSimpleSimilarity(current.titleNormalized, other.titleNormalized);
-        if (similarity >= 0.65) {
+        if (similarity >= 0.40) {
           isSimilar = true;
         }
       }

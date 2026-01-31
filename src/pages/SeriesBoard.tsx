@@ -75,7 +75,7 @@ export const SeriesBoard: React.FC = () => {
           const cardHeight = 280;
           const horizontalGap = 120; // 水平間距（用於連線）
           const verticalGap = 100;    // 垂直間距（增加以容納時間標籤）
-          const cols = Math.min(5, Math.max(3, Math.ceil(Math.sqrt(sortedNews.length)))); // 3-5 列
+          const cols = 4; // 固定每行 4 篇
           const startX = 100;
           const startY = 100;
 
@@ -112,14 +112,8 @@ export const SeriesBoard: React.FC = () => {
           const boardHeight = startY + totalRows * (cardHeight + verticalGap) + 150;
           setBoardSize({ width: boardWidth, height: boardHeight });
 
-          // 計算適合的初始縮放比例
-          const viewportHeight = window.innerHeight - 150; // 減去頂部工具列
-          const viewportWidth = window.innerWidth;
-          const scaleForHeight = viewportHeight / boardHeight;
-          const scaleForWidth = viewportWidth / boardWidth;
-          const optimalScale = Math.min(1, Math.max(0.3, Math.min(scaleForHeight, scaleForWidth) * 0.9));
-
-          setScale(optimalScale);
+          // 預設 100% 縮放
+          setScale(1);
           setOffset({ x: 0, y: 0 });
         }
       } catch (error) {
@@ -441,8 +435,10 @@ export const SeriesBoard: React.FC = () => {
                 </div>
 
                 {/* 卡片本體 */}
-                <Link
-                  to={`/news/${node.news.id}`}
+                <a
+                  href={`#/news/${node.news.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className={cn(
                     'block bg-white rounded-lg shadow-lg border-2 overflow-hidden',
                     'hover:shadow-2xl hover:scale-105 transition-all duration-200',
@@ -483,7 +479,7 @@ export const SeriesBoard: React.FC = () => {
                       </span>
                     </div>
                   </div>
-                </Link>
+                </a>
 
                 {/* 時間標籤 */}
                 <div
