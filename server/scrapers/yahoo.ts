@@ -45,6 +45,19 @@ const EXCLUDED_TITLE_KEYWORDS = [
   '女神',
 ];
 
+// 外國通訊社標記（描述開頭格式）
+// 例如：「（法新社華盛頓30日電）」、「（中央社記者xxx日電）」
+const FOREIGN_WIRE_PATTERNS = [
+  /^（法新社/,
+  /^（路透社/,
+  /^（美聯社/,
+  /^（中央社/,
+  /^（共同社/,
+  /^\(AFP/i,
+  /^\(Reuters/i,
+  /^\(AP\)/i,
+];
+
 interface RSSItem {
   title: string;
   link: string;
@@ -209,17 +222,27 @@ function extractArticleId(url: string): string {
 /**
  * 檢查是否應該排除該文章
  */
-function shouldExclude(title: string, description: string): boolean {
-  const text = (title + ' ' + description).toLowerCase();
+function shouldExclude(title: string, description: string): { exclude: boolean; reason?: string } {
+  const text = title + ' ' + description;
+  const textLower = text.toLowerCase();
 
-  // 檢查排除關鍵字
+  // 檢查排除關鍵字（娛樂等）
   for (const keyword of EXCLUDED_TITLE_KEYWORDS) {
-    if (text.includes(keyword.toLowerCase())) {
-      return true;
+    if (textLower.includes(keyword.toLowerCase())) {
+      return { exclude: true, reason: `娛樂/生活: ${keyword}` };
     }
   }
 
-  return false;
+  // 檢查外國通訊社標記（描述開頭）
+  // 這些通常是轉載的外國新聞
+  for (const pattern of FOREIGN_WIRE_PATTERNS) {
+    if (pattern.test(description)) {
+      const match = description.match(pattern);
+      return { exclude: true, reason: `外國通訊社: ${match?.[0] || ''}` };
+    }
+  }
+
+  return { exclude: false };
 }
 
 async function getMediaSourceId(): Promise<number> {
@@ -323,8 +346,9 @@ export async function scrapeYahoo(options: {
     if (articles.length >= limit) break;
 
     // 檢查是否應該排除
-    if (shouldExclude(item.title, item.description)) {
-      console.log(`   ⏭️  Skipping (excluded category): ${item.title.substring(0, 30)}...`);
+    const excludeCheck = shouldExclude(item.title, item.description);
+    if (excludeCheck.exclude) {
+      console.log(`   ⏭️  Skipping (${excludeCheck.reason}): ${item.title.substring(0, 30)}...`);
       skippedByCategory++;
       continue;
     }
@@ -538,7 +562,7 @@ export async function testFetch(): Promise<void> {
   console.log('PARSED RSS ITEMS:');
   console.log('='.repeat(60));
 
-  const filtered = items.filter((item) => !shouldExclude(item.title, item.description));
+  const filtered = items.filter((item) => !shouldExclude(item.title, item.description).exclude);
 
   console.log(`\nTotal items: ${items.length}`);
   console.log(`After filtering: ${filtered.length}\n`);
