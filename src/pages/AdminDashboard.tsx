@@ -33,6 +33,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Star,
+  FileX,
+  FileText,
 } from 'lucide-react';
 import {
   LineChart,
@@ -55,6 +58,7 @@ type NewsItemWithAdmin = NewsItemWithSimilarity;
 
 const PAGE_SIZE = 100;
 const BOOKMARK_KEY = 'admin_bookmark_article_id';
+const STARRED_KEY = 'admin_starred_article_ids';
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
   const navigate = useNavigate();
@@ -83,6 +87,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
   const [bookmarkedArticleId, setBookmarkedArticleId] = useState<string | null>(() => {
     return localStorage.getItem(BOOKMARK_KEY);
   });
+
+  // 星標狀態（可多選）
+  const [starredArticleIds, setStarredArticleIds] = useState<Set<string>>(() => {
+    const stored = localStorage.getItem(STARRED_KEY);
+    return stored ? new Set(JSON.parse(stored)) : new Set();
+  });
+
+  // 是否顯示星標收藏
+  const [showStarredOnly, setShowStarredOnly] = useState(false);
 
   // 如果沒有登入，導向登入頁
   useEffect(() => {
@@ -156,10 +169,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
     }
   };
 
+  // 切換星標
+  const handleToggleStar = (articleId: string) => {
+    setStarredArticleIds((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(articleId)) {
+        newSet.delete(articleId);
+      } else {
+        newSet.add(articleId);
+      }
+      localStorage.setItem(STARRED_KEY, JSON.stringify([...newSet]));
+      return newSet;
+    });
+  };
+
   // 過濾搜尋
-  const filteredNews = searchTerm
-    ? news.filter((n) => n.title.toLowerCase().includes(searchTerm.toLowerCase()))
-    : news;
+  // 過濾搜尋和星標
+  const filteredNews = news.filter((n) => {
+    // 如果只顯示星標，過濾非星標文章
+    if (showStarredOnly && !starredArticleIds.has(n.id)) {
+      return false;
+    }
+    // 搜尋過濾
+    if (searchTerm && !n.title.toLowerCase().includes(searchTerm.toLowerCase())) {
+      return false;
+    }
+    return true;
+  });
 
   // 圖表資料
   const chartData = dailyStats
@@ -269,6 +305,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
           <span className="text-sm text-muted-foreground bg-muted px-3 py-1 rounded">
             上次更新: {lastUpdate}
           </span>
+          {starredArticleIds.size > 0 && (
+            <Button
+              variant={showStarredOnly ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setShowStarredOnly(!showStarredOnly)}
+            >
+              <Star className={`mr-2 h-4 w-4 ${showStarredOnly ? 'fill-white' : 'fill-yellow-400 text-yellow-400'}`} />
+              星標收藏 ({starredArticleIds.size})
+            </Button>
+          )}
           {bookmarkedArticleId && (
             <Button variant="outline" size="sm" onClick={handleJumpToBookmark}>
               <Bookmark className="mr-2 h-4 w-4 fill-amber-500 text-amber-500" /> 跳至書籤
@@ -425,6 +471,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
                 <thead className="text-xs text-muted-foreground uppercase bg-muted/50">
                   <tr>
                     <th className="px-4 py-3">狀態</th>
+                    <th className="px-4 py-3 text-center">封面</th>
                     <th className="px-4 py-3">標題</th>
                     <th className="px-4 py-3">來源</th>
                     <th className="px-4 py-3">系列</th>
@@ -465,6 +512,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
                           )}
                         </div>
                       </td>
+                      <td className="px-4 py-4 text-center">
+                        {item.hasThumbnail ? (
+                          <FileText size={18} className="mx-auto text-green-500" title="有封面圖像" />
+                        ) : (
+                          <FileX size={18} className="mx-auto text-red-500" title="無封面圖像" />
+                        )}
+                      </td>
                       <td
                         className="px-4 py-4 font-medium max-w-[300px] truncate"
                         title={item.title}
@@ -494,6 +548,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
                       </td>
                       <td className="px-4 py-4 text-right">
                         <div className="flex justify-end gap-2">
+                          <button
+                            className={`p-1.5 rounded hover:bg-muted ${
+                              starredArticleIds.has(item.id)
+                                ? 'text-yellow-500'
+                                : 'text-muted-foreground hover:text-yellow-500'
+                            }`}
+                            title={starredArticleIds.has(item.id) ? '取消星標' : '加入星標收藏'}
+                            onClick={() => handleToggleStar(item.id)}
+                          >
+                            <Star
+                              size={16}
+                              className={starredArticleIds.has(item.id) ? 'fill-yellow-400' : ''}
+                            />
+                          </button>
                           <button
                             className={`p-1.5 rounded hover:bg-muted ${
                               bookmarkedArticleId === item.id

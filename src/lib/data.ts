@@ -651,6 +651,7 @@ export interface NewsItemWithSimilarity extends NewsItem {
   isSimilarDuplicate: boolean; // 是否為相似重複文章（低優先級）
   similarToId: string | null;  // 相似的原始文章 ID
   titleNormalized: string | null;
+  hasThumbnail: boolean; // 是否有封面圖像
 }
 
 /**
@@ -687,6 +688,7 @@ export async function fetchNewsForAdmin(
 
   const newsItems = result.rows.map((row) => {
     const r = row as Record<string, unknown>;
+    const thumbnail = r.thumbnail_url as string | null;
     return {
       ...dbToNewsItem(r as unknown as DBArticle),
       isDisabled: r.is_disabled === 1,
@@ -694,6 +696,7 @@ export async function fetchNewsForAdmin(
       isSimilarDuplicate: false,
       similarToId: null as string | null,
       titleNormalized: r.title_normalized as string | null,
+      hasThumbnail: thumbnail !== null && thumbnail.trim().length > 0,
       clusterId: r.cluster_id as string | null,
       publishedAtTime: new Date(r.published_at as string).getTime(),
     };
