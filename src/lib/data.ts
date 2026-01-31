@@ -630,11 +630,12 @@ export async function setNewsSeriesId(
 }
 
 /**
- * 獲取管理員新聞列表（包含已停用的）
+ * 獲取管理員新聞列表（包含已停用的，支援分頁）
  */
 export async function fetchNewsForAdmin(
   limit: number = 50,
-  includeDisabled: boolean = true
+  includeDisabled: boolean = true,
+  offset: number = 0
 ): Promise<(NewsItem & { isDisabled: boolean; seriesId: number | null })[]> {
   const whereClause = includeDisabled ? '' : 'WHERE COALESCE(a.is_disabled, 0) = 0';
 
@@ -653,9 +654,9 @@ export async function fetchNewsForAdmin(
       LEFT JOIN categories c ON a.category_id = c.id
       ${whereClause}
       ORDER BY a.published_at DESC
-      LIMIT ?
+      LIMIT ? OFFSET ?
     `,
-    args: [limit],
+    args: [limit, offset],
   });
 
   return result.rows.map((row) => {
@@ -666,4 +667,53 @@ export async function fetchNewsForAdmin(
       seriesId: r.series_id as number | null,
     };
   });
+}
+
+/**
+ * 獲取管理員新聞總數
+ */
+export async function fetchNewsCountForAdmin(includeDisabled: boolean = true): Promise<number> {
+  const whereClause = includeDisabled ? '' : 'WHERE COALESCE(is_disabled, 0) = 0';
+
+  const result = await db.execute({
+    sql: `SELECT COUNT(*) as count FROM articles ${whereClause}`,
+    args: [],
+  });
+
+  return result.rows[0].count as number;
+}
+
+/**
+ * 獲取書籤文章的頁碼位置
+ */
+export async function getBookmarkPagePosition(
+  articleId: string,
+  pageSize: number = 100,
+  includeDisabled: boolean = true
+): Promise<number> {
+  const whereClause = includeDisabled ? '' : 'WHERE COALESCE(a.is_disabled, 0) = 0';
+
+  // 獲取書籤文章的發布時間
+  const articleResult = await db.execute({
+    sql: `SELECT published_at FROM articles WHERE id = ?`,
+    args: [articleId],
+  });
+
+  if (articleResult.rows.length === 0) {
+    return 1; // 文章不存在，返回第一頁
+  }
+
+  const publishedAt = articleResult.rows[0].published_at as string;
+
+  // 計算有多少文章比書籤文章更新
+  const countResult = await db.execute({
+    sql: `
+      SELECT COUNT(*) as count FROM articles a
+      ${whereClause ? whereClause + ' AND' : 'WHERE'} a.published_at > ?
+    `,
+    args: [publishedAt],
+  });
+
+  const position = countResult.rows[0].count as number;
+  return Math.floor(position / pageSize) + 1;
 }

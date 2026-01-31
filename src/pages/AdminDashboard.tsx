@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   fetchNewsForAdmin,
+  fetchNewsCountForAdmin,
+  getBookmarkPagePosition,
   fetchStats,
   fetchDailyStats,
   fetchNewsSeries,
@@ -26,6 +28,9 @@ import {
   Plus,
   LogOut,
   X,
+  Bookmark,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import {
   LineChart,
@@ -46,6 +51,9 @@ interface AdminDashboardProps {
 
 type NewsItemWithAdmin = NewsItem & { isDisabled: boolean; seriesId: number | null };
 
+const PAGE_SIZE = 100;
+const BOOKMARK_KEY = 'admin_bookmark_article_id';
+
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
@@ -65,6 +73,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
   const [newSeriesDesc, setNewSeriesDesc] = useState('');
   const [newSeriesColor, setNewSeriesColor] = useState('#3B82F6');
 
+  // 分頁狀態
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+
+  // 書籤狀態
+  const [bookmarkedArticleId, setBookmarkedArticleId] = useState<string | null>(() => {
+    return localStorage.getItem(BOOKMARK_KEY);
+  });
+
   // 如果沒有登入，導向登入頁
   useEffect(() => {
     if (!user) {
@@ -79,13 +96,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
 
       setLoading(true);
       try {
-        const [newsData, statsData, dailyData, seriesData] = await Promise.all([
-          fetchNewsForAdmin(100),
+        const offset = (currentPage - 1) * PAGE_SIZE;
+        const [newsData, countData, statsData, dailyData, seriesData] = await Promise.all([
+          fetchNewsForAdmin(PAGE_SIZE, true, offset),
+          fetchNewsCountForAdmin(true),
           fetchStats(),
           fetchDailyStats(7),
           fetchNewsSeries(),
         ]);
         setNews(newsData);
+        setTotalCount(countData);
         setStats(statsData);
         setDailyStats(dailyData);
         setSeries(seriesData);
@@ -96,7 +116,43 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
       }
     };
     loadData();
-  }, [user]);
+  }, [user, currentPage]);
+
+  // 計算總頁數
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+
+  // 分頁操作
+  const goToPage = (page: number) => {
+    if (page >= 1 && page <= totalPages) {
+      setCurrentPage(page);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  // 設定書籤
+  const handleSetBookmark = (articleId: string) => {
+    if (bookmarkedArticleId === articleId) {
+      // 如果點擊的是當前書籤，則移除
+      localStorage.removeItem(BOOKMARK_KEY);
+      setBookmarkedArticleId(null);
+    } else {
+      // 設定新書籤
+      localStorage.setItem(BOOKMARK_KEY, articleId);
+      setBookmarkedArticleId(articleId);
+    }
+  };
+
+  // 跳轉到書籤位置
+  const handleJumpToBookmark = async () => {
+    if (!bookmarkedArticleId) return;
+
+    try {
+      const page = await getBookmarkPagePosition(bookmarkedArticleId, PAGE_SIZE, true);
+      setCurrentPage(page);
+    } catch (error) {
+      console.error('Failed to jump to bookmark:', error);
+    }
+  };
 
   // 過濾搜尋
   const filteredNews = searchTerm
@@ -211,6 +267,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
           <span className="text-sm text-muted-foreground bg-muted px-3 py-1 rounded">
             上次更新: {lastUpdate}
           </span>
+          {bookmarkedArticleId && (
+            <Button variant="outline" size="sm" onClick={handleJumpToBookmark}>
+              <Bookmark className="mr-2 h-4 w-4 fill-amber-500 text-amber-500" /> 跳至書籤
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
             <RefreshCw className="mr-2 h-4 w-4" /> 重新載入
           </Button>
@@ -340,8 +401,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
-              <div className="text-sm text-muted-foreground">
-                顯示 {filteredNews.length} 筆
+              <div className="text-sm text-muted-foreground flex items-center gap-4">
+                <span>顯示 {filteredNews.length} 筆</span>
+                {bookmarkedArticleId && (
+                  <span className="flex items-center gap-1 text-amber-600">
+                    <Bookmark size={14} className="fill-amber-500" />
+                    已設書籤
+                  </span>
+                )}
               </div>
             </div>
             <div className="overflow-x-auto">
@@ -361,7 +428,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
                     <tr
                       key={item.id}
                       className={`border-b hover:bg-muted/30 transition-colors ${
-                        item.isDisabled ? 'bg-red-50/50 opacity-60' : 'bg-background'
+                        item.isDisabled
+                          ? 'bg-red-50/50 opacity-60'
+                          : bookmarkedArticleId === item.id
+                          ? 'bg-amber-50/50 border-l-4 border-l-amber-500'
+                          : 'bg-background'
                       }`}
                     >
                       <td className="px-4 py-4">
@@ -404,6 +475,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
                       </td>
                       <td className="px-4 py-4 text-right">
                         <div className="flex justify-end gap-2">
+                          <button
+                            className={`p-1.5 rounded hover:bg-muted ${
+                              bookmarkedArticleId === item.id
+                                ? 'text-amber-500'
+                                : 'text-muted-foreground hover:text-amber-500'
+                            }`}
+                            title={bookmarkedArticleId === item.id ? '移除書籤' : '設為書籤（標記閱讀位置）'}
+                            onClick={() => handleSetBookmark(item.id)}
+                          >
+                            <Bookmark
+                              size={16}
+                              className={bookmarkedArticleId === item.id ? 'fill-amber-500' : ''}
+                            />
+                          </button>
                           <a
                             href={item.url}
                             target="_blank"
@@ -438,8 +523,47 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
                 </tbody>
               </table>
             </div>
-            <div className="p-4 border-t text-center text-sm text-muted-foreground">
-              顯示 {filteredNews.length} 筆，共 {stats?.totalArticles ?? 0} 筆
+            <div className="p-4 border-t flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="text-sm text-muted-foreground">
+                第 {currentPage} 頁，共 {totalPages} 頁（{totalCount} 筆）
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => goToPage(1)}
+                  disabled={currentPage === 1}
+                >
+                  首頁
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => goToPage(currentPage - 1)}
+                  disabled={currentPage === 1}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="px-3 py-1 text-sm">
+                  {currentPage} / {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => goToPage(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => goToPage(totalPages)}
+                  disabled={currentPage === totalPages}
+                >
+                  末頁
+                </Button>
+              </div>
             </div>
           </Card>
         </>
