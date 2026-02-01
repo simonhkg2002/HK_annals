@@ -32,6 +32,8 @@ import {
   Bookmark,
   ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   Copy,
   Star,
   FileX,
@@ -97,6 +99,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
   // 是否顯示星標收藏
   const [showStarredOnly, setShowStarredOnly] = useState(false);
 
+  // 頁碼輸入狀態
+  const [pageInputValue, setPageInputValue] = useState('');
+
+  // 標記是否需要在頁面載入後滾動到書籤
+  const [pendingScrollToBookmark, setPendingScrollToBookmark] = useState(false);
+
   // 如果沒有登入，導向登入頁
   useEffect(() => {
     if (!user) {
@@ -136,6 +144,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
   // 計算總頁數
   const totalPages = Math.ceil(totalCount / PAGE_SIZE);
 
+  // 當資料載入完成且需要滾動到書籤時執行滾動
+  useEffect(() => {
+    if (pendingScrollToBookmark && !loading && bookmarkedArticleId) {
+      const scrollToBookmark = () => {
+        const bookmarkedRow = document.getElementById(`article-row-${bookmarkedArticleId}`);
+        if (bookmarkedRow) {
+          bookmarkedRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          // 添加高亮動畫效果
+          bookmarkedRow.classList.add('bookmark-highlight');
+          setTimeout(() => {
+            bookmarkedRow.classList.remove('bookmark-highlight');
+          }, 2000);
+        }
+      };
+      // 延遲執行確保 DOM 已渲染
+      setTimeout(scrollToBookmark, 150);
+      setPendingScrollToBookmark(false);
+    }
+  }, [pendingScrollToBookmark, loading, bookmarkedArticleId]);
+
   // 分頁操作
   const goToPage = (page: number) => {
     if (page >= 1 && page <= totalPages) {
@@ -157,15 +185,53 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
     }
   };
 
-  // 跳轉到書籤位置
+  // 滾動到書籤記錄
+  const scrollToBookmarkedRow = () => {
+    if (!bookmarkedArticleId) return;
+
+    // 使用 setTimeout 確保 DOM 已更新
+    setTimeout(() => {
+      const bookmarkedRow = document.getElementById(`article-row-${bookmarkedArticleId}`);
+      if (bookmarkedRow) {
+        bookmarkedRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // 添加高亮動畫效果
+        bookmarkedRow.classList.add('bookmark-highlight');
+        setTimeout(() => {
+          bookmarkedRow.classList.remove('bookmark-highlight');
+        }, 2000);
+      }
+    }, 100);
+  };
+
+  // 跳轉到書籤位置並滾動到該記錄（直接跳轉）
   const handleJumpToBookmark = async () => {
     if (!bookmarkedArticleId) return;
 
     try {
       const page = await getBookmarkPagePosition(bookmarkedArticleId, PAGE_SIZE, true);
-      setCurrentPage(page);
+
+      if (page === currentPage) {
+        // 如果已經在同一頁，直接滾動到該記錄
+        scrollToBookmarkedRow();
+      } else {
+        // 設定頁面，讓 useEffect 處理滾動
+        setCurrentPage(page);
+        // 標記需要滾動到書籤
+        setPendingScrollToBookmark(true);
+      }
     } catch (error) {
       console.error('Failed to jump to bookmark:', error);
+    }
+  };
+
+
+  // 處理頁碼輸入
+  const handlePageInputSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const page = parseInt(pageInputValue, 10);
+    if (!isNaN(page) && page >= 1 && page <= totalPages) {
+      goToPage(page);
+      setPageInputValue('');
     }
   };
 
@@ -446,24 +512,82 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
 
           {/* 新聞列表 */}
           <Card className="overflow-hidden">
-            <div className="p-4 border-b flex flex-col md:flex-row justify-between items-center gap-4 bg-muted/20">
-              <div className="relative w-full md:w-auto">
-                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="搜尋標題..."
-                  className="pl-8 w-full md:w-[300px]"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
+            <div className="p-4 border-b flex flex-col gap-4 bg-muted/20">
+              {/* 搜尋和基本資訊 */}
+              <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+                <div className="relative w-full md:w-auto">
+                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="搜尋標題..."
+                    className="pl-8 w-full md:w-[300px]"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
+                </div>
+                <div className="text-sm text-muted-foreground flex items-center gap-4">
+                  <span>顯示 {filteredNews.length} 筆</span>
+                  {bookmarkedArticleId && (
+                    <span className="flex items-center gap-1 text-amber-600">
+                      <Bookmark size={14} className="fill-amber-500" />
+                      已設書籤
+                    </span>
+                  )}
+                </div>
               </div>
-              <div className="text-sm text-muted-foreground flex items-center gap-4">
-                <span>顯示 {filteredNews.length} 筆</span>
-                {bookmarkedArticleId && (
-                  <span className="flex items-center gap-1 text-amber-600">
-                    <Bookmark size={14} className="fill-amber-500" />
-                    已設書籤
-                  </span>
-                )}
+              {/* 頂部分頁控件 */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2 border-t border-muted">
+                <div className="text-sm text-muted-foreground">
+                  第 {currentPage} 頁，共 {totalPages} 頁（{totalCount} 筆）
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => goToPage(1)}
+                    disabled={currentPage === 1}
+                  >
+                    <ChevronsLeft className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => goToPage(currentPage - 1)}
+                    disabled={currentPage === 1}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <form onSubmit={handlePageInputSubmit} className="flex items-center gap-1">
+                    <Input
+                      type="number"
+                      min={1}
+                      max={totalPages}
+                      value={pageInputValue}
+                      onChange={(e) => setPageInputValue(e.target.value)}
+                      placeholder={String(currentPage)}
+                      className="w-16 h-8 text-center text-sm"
+                    />
+                    <span className="text-sm text-muted-foreground">/ {totalPages}</span>
+                    <Button type="submit" variant="outline" size="sm" className="ml-1">
+                      跳轉
+                    </Button>
+                  </form>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => goToPage(currentPage + 1)}
+                    disabled={currentPage === totalPages}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => goToPage(totalPages)}
+                    disabled={currentPage === totalPages}
+                  >
+                    <ChevronsRight className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             </div>
             <div className="overflow-x-auto">
@@ -483,6 +607,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
                   {filteredNews.map((item) => (
                     <tr
                       key={item.id}
+                      id={`article-row-${item.id}`}
                       className={`border-b hover:bg-muted/30 transition-colors ${
                         item.isDisabled
                           ? 'bg-red-50/50 opacity-60'
@@ -621,6 +746,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
                   onClick={() => goToPage(1)}
                   disabled={currentPage === 1}
                 >
+                  <ChevronsLeft className="h-4 w-4 mr-1" />
                   首頁
                 </Button>
                 <Button
@@ -631,9 +757,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </Button>
-                <span className="px-3 py-1 text-sm">
-                  {currentPage} / {totalPages}
-                </span>
+                <form onSubmit={handlePageInputSubmit} className="flex items-center gap-1">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={totalPages}
+                    value={pageInputValue}
+                    onChange={(e) => setPageInputValue(e.target.value)}
+                    placeholder={String(currentPage)}
+                    className="w-16 h-8 text-center text-sm"
+                  />
+                  <span className="text-sm text-muted-foreground">/ {totalPages}</span>
+                  <Button type="submit" variant="outline" size="sm" className="ml-1">
+                    跳轉
+                  </Button>
+                </form>
                 <Button
                   variant="outline"
                   size="sm"
@@ -649,6 +787,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
                   disabled={currentPage === totalPages}
                 >
                   末頁
+                  <ChevronsRight className="h-4 w-4 ml-1" />
                 </Button>
               </div>
             </div>

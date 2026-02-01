@@ -111,6 +111,20 @@
           @apply bg-background text-foreground;
         }
       }
+      /* 書籤高亮動畫 */
+      @keyframes bookmark-pulse {
+        0%, 100% {
+          background-color: rgba(245, 158, 11, 0.3);
+          box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4);
+        }
+        50% {
+          background-color: rgba(245, 158, 11, 0.5);
+          box-shadow: 0 0 20px 5px rgba(245, 158, 11, 0.3);
+        }
+      }
+      .bookmark-highlight {
+        animation: bookmark-pulse 0.5s ease-in-out 3;
+      }
     </style>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600;700;900&display=swap" rel="stylesheet">
   <script type="importmap">
