@@ -111,6 +111,34 @@ export async function fetchDailyStats(days: number = 7): Promise<{ date: string;
   }));
 }
 
+// 獲取每日統計（支援系列過濾）
+export async function fetchDailyStatsBySeries(
+  days: number = 7,
+  seriesId: number | null
+): Promise<{ date: string; count: number }[]> {
+  const whereClause = seriesId !== null ? 'AND a.series_id = ?' : '';
+  const args = seriesId !== null ? [`-${days} days`, seriesId] : [`-${days} days`];
+
+  const result = await db.execute({
+    sql: `
+      SELECT
+        date(a.published_at) as date,
+        COUNT(*) as count
+      FROM articles a
+      WHERE a.published_at >= datetime('now', ?)
+      ${whereClause}
+      GROUP BY date(a.published_at)
+      ORDER BY date DESC
+    `,
+    args,
+  });
+
+  return result.rows.map((row) => ({
+    date: row.date as string,
+    count: row.count as number,
+  }));
+}
+
 // 獲取統計資料
 export async function fetchStats(): Promise<{
   totalArticles: number;
@@ -138,6 +166,65 @@ export async function fetchStats(): Promise<{
       GROUP BY c.id
       ORDER BY count DESC
     `),
+  ]);
+
+  return {
+    totalArticles: total.rows[0].count as number,
+    todayArticles: today.rows[0].count as number,
+    sources: sources.rows.map((r) => ({ name: r.name as string, count: r.count as number })),
+    categories: categories.rows.map((r) => ({
+      name: (r.name as string) || '未分類',
+      count: r.count as number,
+    })),
+  };
+}
+
+// 獲取統計資料（支援系列過濾）
+export async function fetchStatsBySeries(
+  seriesId: number | null
+): Promise<{
+  totalArticles: number;
+  todayArticles: number;
+  sources: { name: string; count: number }[];
+  categories: { name: string; count: number }[];
+}> {
+  const whereClause = seriesId !== null ? 'WHERE a.series_id = ?' : '';
+  const args = seriesId !== null ? [seriesId] : [];
+
+  const [total, today, sources, categories] = await Promise.all([
+    db.execute({
+      sql: `SELECT COUNT(*) as count FROM articles a ${whereClause}`,
+      args,
+    }),
+    db.execute({
+      sql: `
+        SELECT COUNT(*) as count FROM articles a
+        ${whereClause ? whereClause + ' AND' : 'WHERE'} date(a.published_at) = date('now')
+      `,
+      args,
+    }),
+    db.execute({
+      sql: `
+        SELECT ms.name_zh as name, COUNT(a.id) as count
+        FROM articles a
+        JOIN media_sources ms ON a.media_source_id = ms.id
+        ${whereClause}
+        GROUP BY ms.id
+        ORDER BY count DESC
+      `,
+      args,
+    }),
+    db.execute({
+      sql: `
+        SELECT c.name_zh as name, COUNT(a.id) as count
+        FROM articles a
+        LEFT JOIN categories c ON a.category_id = c.id
+        ${whereClause}
+        GROUP BY c.id
+        ORDER BY count DESC
+      `,
+      args,
+    }),
   ]);
 
   return {
@@ -759,6 +846,125 @@ export async function fetchNewsForAdmin(
 }
 
 /**
+ * 獲取管理員新聞列表（支援系列過濾，包含已停用的，支援分頁，含相似度檢測）
+ */
+export async function fetchNewsForAdminBySeries(
+  limit: number = 50,
+  includeDisabled: boolean = true,
+  offset: number = 0,
+  seriesId: number | null
+): Promise<NewsItemWithSimilarity[]> {
+  const whereClauses: string[] = [];
+  const args: any[] = [];
+
+  if (!includeDisabled) {
+    whereClauses.push('COALESCE(a.is_disabled, 0) = 0');
+  }
+
+  if (seriesId !== null) {
+    whereClauses.push('a.series_id = ?');
+    args.push(seriesId);
+  }
+
+  const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+  args.push(limit, offset);
+
+  const result = await db.execute({
+    sql: `
+      SELECT
+        a.*,
+        a.is_disabled,
+        a.series_id,
+        a.title_normalized,
+        a.cluster_id,
+        ms.code as source_code,
+        ms.name_zh as source_name,
+        c.code as category_code,
+        c.name_zh as category_name
+      FROM articles a
+      LEFT JOIN media_sources ms ON a.media_source_id = ms.id
+      LEFT JOIN categories c ON a.category_id = c.id
+      ${whereClause}
+      ORDER BY a.published_at DESC
+      LIMIT ? OFFSET ?
+    `,
+    args,
+  });
+
+  const newsItems = result.rows.map((row) => {
+    const r = row as Record<string, unknown>;
+    const thumbnail = r.thumbnail_url as string | null;
+    return {
+      ...dbToNewsItem(r as unknown as DBArticle),
+      isDisabled: r.is_disabled === 1,
+      seriesId: r.series_id as number | null,
+      isSimilarDuplicate: false,
+      similarToId: null as string | null,
+      titleNormalized: r.title_normalized as string | null,
+      hasThumbnail: thumbnail !== null && thumbnail.trim().length > 0,
+      clusterId: r.cluster_id as string | null,
+      publishedAtTime: new Date(r.published_at as string).getTime(),
+    };
+  });
+
+  // 檢測 ±6 小時內的相似文章
+  const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+
+  for (let i = 0; i < newsItems.length; i++) {
+    const current = newsItems[i];
+    if (current.isSimilarDuplicate) continue; // 已標記為重複，跳過
+
+    // 查找 ±6 小時內的相似文章
+    for (let j = 0; j < newsItems.length; j++) {
+      if (i === j) continue;
+      const other = newsItems[j];
+      if (other.isSimilarDuplicate) continue;
+
+      // 檢查時間差是否在 ±6 小時內
+      const timeDiff = Math.abs(current.publishedAtTime - other.publishedAtTime);
+      if (timeDiff > SIX_HOURS_MS) continue;
+
+      // 檢查相似度（使用 cluster_id 或 title_normalized）
+      let isSimilar = false;
+
+      // 優先使用 cluster_id
+      if (current.clusterId && other.clusterId && current.clusterId === other.clusterId) {
+        isSimilar = true;
+      }
+      // 其次使用 title_normalized 相似度
+      else if (current.titleNormalized && other.titleNormalized) {
+        const similarity = calculateSimpleSimilarity(current.titleNormalized, other.titleNormalized);
+        if (similarity >= 0.40) {
+          isSimilar = true;
+        }
+      }
+
+      if (isSimilar) {
+        // 比較優先級，標記低優先級的為重複
+        const currentPriority = getSourcePriority(current.source);
+        const otherPriority = getSourcePriority(other.source);
+
+        if (currentPriority > otherPriority) {
+          // current 優先級較低，標記為重複
+          current.isSimilarDuplicate = true;
+          current.similarToId = other.id;
+          break; // current 已標記，跳出內層循環
+        } else if (otherPriority > currentPriority) {
+          // other 優先級較低，標記為重複
+          other.isSimilarDuplicate = true;
+          other.similarToId = current.id;
+        }
+        // 優先級相同則都不標記
+      }
+    }
+  }
+
+  // 移除臨時屬性，返回結果
+  return newsItems.map(({ publishedAtTime, clusterId, ...rest }) => rest);
+}
+
+/**
  * 獲取管理員新聞總數
  */
 export async function fetchNewsCountForAdmin(includeDisabled: boolean = true): Promise<number> {
@@ -767,6 +973,35 @@ export async function fetchNewsCountForAdmin(includeDisabled: boolean = true): P
   const result = await db.execute({
     sql: `SELECT COUNT(*) as count FROM articles ${whereClause}`,
     args: [],
+  });
+
+  return result.rows[0].count as number;
+}
+
+/**
+ * 獲取管理員新聞總數（支援系列過濾）
+ */
+export async function fetchNewsCountForAdminBySeries(
+  includeDisabled: boolean = true,
+  seriesId: number | null
+): Promise<number> {
+  const whereClauses: string[] = [];
+  const args: any[] = [];
+
+  if (!includeDisabled) {
+    whereClauses.push('COALESCE(is_disabled, 0) = 0');
+  }
+
+  if (seriesId !== null) {
+    whereClauses.push('series_id = ?');
+    args.push(seriesId);
+  }
+
+  const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+  const result = await db.execute({
+    sql: `SELECT COUNT(*) as count FROM articles ${whereClause}`,
+    args,
   });
 
   return result.rows[0].count as number;

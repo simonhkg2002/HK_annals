@@ -3,6 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import {
   fetchNewsForAdmin,
   fetchNewsCountForAdmin,
+  fetchNewsForAdminBySeries,
+  fetchNewsCountForAdminBySeries,
+  fetchStatsBySeries,
+  fetchDailyStatsBySeries,
   getBookmarkPagePosition,
   fetchStats,
   fetchDailyStats,
@@ -67,6 +71,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
   const [searchTerm, setSearchTerm] = useState('');
   const [news, setNews] = useState<NewsItemWithAdmin[]>([]);
   const [series, setSeries] = useState<NewsSeries[]>([]);
+  const [selectedSeriesId, setSelectedSeriesId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<{
     totalArticles: number;
@@ -121,10 +126,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
       try {
         const offset = (currentPage - 1) * PAGE_SIZE;
         const [newsData, countData, statsData, dailyData, seriesData] = await Promise.all([
-          fetchNewsForAdmin(PAGE_SIZE, true, offset),
-          fetchNewsCountForAdmin(true),
-          fetchStats(),
-          fetchDailyStats(7),
+          fetchNewsForAdminBySeries(PAGE_SIZE, true, offset, selectedSeriesId),
+          fetchNewsCountForAdminBySeries(true, selectedSeriesId),
+          fetchStatsBySeries(selectedSeriesId),
+          fetchDailyStatsBySeries(7, selectedSeriesId),
           fetchNewsSeries(),
         ]);
         setNews(newsData);
@@ -139,7 +144,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
       }
     };
     loadData();
-  }, [user, currentPage]);
+  }, [user, currentPage, selectedSeriesId]);
 
   // 計算總頁數
   const totalPages = Math.ceil(totalCount / PAGE_SIZE);
@@ -247,6 +252,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
       localStorage.setItem(STARRED_KEY, JSON.stringify([...newSet]));
       return newSet;
     });
+  };
+
+  // 切換系列過濾
+  const handleSeriesChange = (seriesId: number | null) => {
+    setSelectedSeriesId(seriesId);
+    setCurrentPage(1); // 重置到第一頁
   };
 
   // 過濾搜尋
@@ -436,7 +447,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
           {/* 圖表和系列管理 */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
             <Card className="col-span-2 p-6">
-              <h3 className="font-bold mb-4">過去 7 天爬取趨勢</h3>
+              <h3 className="font-bold mb-4">
+                過去 7 天爬取趨勢
+                {selectedSeriesId && (
+                  <span className="text-sm font-normal text-muted-foreground ml-2">
+                    - {series.find(s => s.id === selectedSeriesId)?.name}
+                  </span>
+                )}
+              </h3>
               <div className="h-[200px] w-full">
                 {chartData.length > 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
@@ -515,17 +533,39 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
             <div className="p-4 border-b flex flex-col gap-4 bg-muted/20">
               {/* 搜尋和基本資訊 */}
               <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-                <div className="relative w-full md:w-auto">
-                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="搜尋標題..."
-                    className="pl-8 w-full md:w-[300px]"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                  />
+                <div className="flex items-center gap-3 w-full md:w-auto">
+                  {/* 系列選擇器 */}
+                  <select
+                    value={selectedSeriesId ?? ''}
+                    onChange={(e) => handleSeriesChange(e.target.value ? Number(e.target.value) : null)}
+                    className="px-3 py-2 border rounded-md bg-background text-sm min-w-[140px]"
+                  >
+                    <option value="">全部新聞</option>
+                    {series.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* 搜尋框 */}
+                  <div className="relative w-full md:w-auto">
+                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="搜尋標題..."
+                      className="pl-8 w-full md:w-[300px]"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                  </div>
                 </div>
                 <div className="text-sm text-muted-foreground flex items-center gap-4">
                   <span>顯示 {filteredNews.length} 筆</span>
+                  {selectedSeriesId && (
+                    <span className="flex items-center gap-1 text-brand-blue font-medium">
+                      系列：{series.find(s => s.id === selectedSeriesId)?.name}
+                    </span>
+                  )}
                   {bookmarkedArticleId && (
                     <span className="flex items-center gap-1 text-amber-600">
                       <Bookmark size={14} className="fill-amber-500" />
