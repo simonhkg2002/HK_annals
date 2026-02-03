@@ -532,6 +532,8 @@ export interface NewsSeries {
   color: string;
   isActive: boolean;
   createdAt?: string | null;
+  keywords?: string[]; // 關鍵詞列表
+  autoAddEnabled?: boolean; // 是否啟用自動加入
 }
 
 /**
@@ -590,7 +592,7 @@ export async function verifyAdminLogin(
  */
 export async function fetchNewsSeries(): Promise<NewsSeries[]> {
   const result = await db.execute(`
-    SELECT id, name, description, color, is_active, created_at
+    SELECT id, name, description, color, is_active, created_at, keywords, auto_add_enabled
     FROM news_series
     WHERE is_active = 1
     ORDER BY created_at DESC
@@ -605,6 +607,8 @@ export async function fetchNewsSeries(): Promise<NewsSeries[]> {
       color: r.color as string,
       isActive: r.is_active === 1,
       createdAt: r.created_at as string | null,
+      keywords: r.keywords ? JSON.parse(r.keywords as string) : [],
+      autoAddEnabled: r.auto_add_enabled === 1,
     };
   });
 }
@@ -643,17 +647,44 @@ export async function fetchNewsBySeries(
 export async function createNewsSeries(
   name: string,
   description: string | null,
-  color: string
+  color: string,
+  keywords: string[] = [],
+  autoAddEnabled: boolean = true
 ): Promise<number> {
+  const keywordsJson = JSON.stringify(keywords);
+
   const result = await db.execute({
     sql: `
-      INSERT INTO news_series (name, description, color)
-      VALUES (?, ?, ?)
+      INSERT INTO news_series (name, description, color, keywords, auto_add_enabled)
+      VALUES (?, ?, ?, ?, ?)
     `,
-    args: [name, description, color],
+    args: [name, description, color, keywordsJson, autoAddEnabled ? 1 : 0],
   });
 
   return Number(result.lastInsertRowid);
+}
+
+/**
+ * 更新新聞系列
+ */
+export async function updateNewsSeries(
+  seriesId: number,
+  name: string,
+  description: string | null,
+  color: string,
+  keywords: string[] = [],
+  autoAddEnabled: boolean = true
+): Promise<void> {
+  const keywordsJson = JSON.stringify(keywords);
+
+  await db.execute({
+    sql: `
+      UPDATE news_series
+      SET name = ?, description = ?, color = ?, keywords = ?, auto_add_enabled = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `,
+    args: [name, description, color, keywordsJson, autoAddEnabled ? 1 : 0, seriesId],
+  });
 }
 
 /**
@@ -1040,4 +1071,129 @@ export async function getBookmarkPagePosition(
 
   const position = countResult.rows[0].count as number;
   return Math.floor(position / pageSize) + 1;
+}
+
+// ============ 自動分類與複核功能 ============
+
+/**
+ * 獲取待複核的新聞列表
+ */
+export async function fetchPendingReviews(
+  limit: number = 100,
+  offset: number = 0,
+  seriesId: number | null = null,
+  searchQuery: string = ''
+): Promise<NewsItemWithSimilarity[]> {
+  const whereClauses = ["a.review_status = 'pending'"];
+  const args: any[] = [];
+
+  if (seriesId !== null) {
+    whereClauses.push('a.series_id = ?');
+    args.push(seriesId);
+  }
+
+  if (searchQuery) {
+    whereClauses.push('a.title LIKE ?');
+    args.push(`%${searchQuery}%`);
+  }
+
+  const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+  args.push(limit, offset);
+
+  const result = await db.execute({
+    sql: `
+      SELECT
+        a.*,
+        a.is_disabled,
+        a.series_id,
+        a.title_normalized,
+        a.cluster_id,
+        a.auto_classified,
+        a.review_status,
+        a.matched_keyword,
+        ms.code as source_code,
+        ms.name_zh as source_name,
+        c.code as category_code,
+        c.name_zh as category_name
+      FROM articles a
+      LEFT JOIN media_sources ms ON a.media_source_id = ms.id
+      LEFT JOIN categories c ON a.category_id = c.id
+      ${whereClause}
+      ORDER BY a.auto_classified_at DESC
+      LIMIT ? OFFSET ?
+    `,
+    args,
+  });
+
+  return result.rows.map((row) => {
+    const r = row as Record<string, unknown>;
+    const thumbnail = r.thumbnail_url as string | null;
+    return {
+      ...dbToNewsItem(r as unknown as DBArticle),
+      isDisabled: r.is_disabled === 1,
+      seriesId: r.series_id as number | null,
+      isSimilarDuplicate: false,
+      similarToId: null,
+      titleNormalized: r.title_normalized as string | null,
+      hasThumbnail: thumbnail !== null && thumbnail.trim().length > 0,
+    };
+  });
+}
+
+/**
+ * 獲取待複核新聞總數
+ */
+export async function fetchPendingReviewsCount(
+  seriesId: number | null = null,
+  searchQuery: string = ''
+): Promise<number> {
+  const whereClauses = ["review_status = 'pending'"];
+  const args: any[] = [];
+
+  if (seriesId !== null) {
+    whereClauses.push('series_id = ?');
+    args.push(seriesId);
+  }
+
+  if (searchQuery) {
+    whereClauses.push('title LIKE ?');
+    args.push(`%${searchQuery}%`);
+  }
+
+  const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+  const result = await db.execute({
+    sql: `SELECT COUNT(*) as count FROM articles ${whereClause}`,
+    args,
+  });
+
+  return result.rows[0].count as number;
+}
+
+/**
+ * 同意自動分類（從複核區移除，保留在系列）
+ */
+export async function approveAutoClassified(articleId: string): Promise<void> {
+  await db.execute({
+    sql: `
+      UPDATE articles
+      SET review_status = 'approved'
+      WHERE id = ?
+    `,
+    args: [articleId],
+  });
+}
+
+/**
+ * 拒絕自動分類（從系列移除，從複核區移除）
+ */
+export async function rejectAutoClassified(articleId: string): Promise<void> {
+  await db.execute({
+    sql: `
+      UPDATE articles
+      SET series_id = NULL, review_status = 'rejected'
+      WHERE id = ?
+    `,
+    args: [articleId],
+  });
 }

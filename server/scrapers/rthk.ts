@@ -11,6 +11,7 @@ import {
   generateClusterId,
   type ArticleForDedup,
 } from '../lib/dedup';
+import { autoClassifyArticle } from '../lib/auto-classify';
 
 // RTHK 分類代碼
 const RTHK_CATEGORIES = {
@@ -405,7 +406,7 @@ export async function scrapeRTHK(options: {
       }
 
       try {
-        await db.execute({
+        const insertResult = await db.execute({
           sql: `
             INSERT OR IGNORE INTO articles (
               media_source_id, original_id, original_url, title, content, summary,
@@ -435,6 +436,12 @@ export async function scrapeRTHK(options: {
           ],
         });
         inserted++;
+
+        // 自動分類文章
+        if (insertResult.lastInsertRowid) {
+          const articleId = Number(insertResult.lastInsertRowid);
+          await autoClassifyArticle(articleId, article.title);
+        }
 
         // 更新群組計數
         if (article.cluster_id) {

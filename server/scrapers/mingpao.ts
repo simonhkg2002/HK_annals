@@ -11,6 +11,7 @@ import {
   generateClusterId,
   type ArticleForDedup,
 } from '../lib/dedup';
+import { autoClassifyArticle } from '../lib/auto-classify';
 
 // 明報 RSS 分類
 const MINGPAO_RSS = {
@@ -393,7 +394,7 @@ export async function scrapeMingPao(options: {
       }
 
       try {
-        await db.execute({
+        const insertResult = await db.execute({
           sql: `
             INSERT OR IGNORE INTO articles (
               media_source_id, original_id, original_url, title, content, summary,
@@ -423,6 +424,12 @@ export async function scrapeMingPao(options: {
           ],
         });
         inserted++;
+
+        // 自動分類文章
+        if (insertResult.lastInsertRowid) {
+          const articleId = Number(insertResult.lastInsertRowid);
+          await autoClassifyArticle(articleId, article.title);
+        }
 
         if (article.cluster_id) {
           await db.execute({

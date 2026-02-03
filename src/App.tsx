@@ -7,6 +7,7 @@ import { MediaPage } from './pages/MediaPage';
 import { SeriesBoard } from './pages/SeriesBoard';
 import { AdminLogin } from './pages/AdminLogin';
 import { AdminDashboard } from './pages/AdminDashboard';
+import { ReviewQueue } from './pages/ReviewQueue';
 import { NewsDetail } from './pages/NewsDetail';
 import { AdminUser } from './lib/data';
 
@@ -60,6 +61,12 @@ function App() {
             path="/admin/dashboard"
             element={
               <AdminDashboard user={adminUser} onLogout={handleLogout} />
+            }
+          />
+          <Route
+            path="/admin/review"
+            element={
+              <ReviewQueue />
             }
           />
           <Route

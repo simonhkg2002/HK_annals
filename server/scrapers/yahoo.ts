@@ -12,6 +12,7 @@ import {
   generateClusterId,
   type ArticleForDedup,
 } from '../lib/dedup';
+import { autoClassifyArticle } from '../lib/auto-classify';
 
 // 排除的類別關鍵字
 const EXCLUDED_CATEGORIES = [
@@ -486,7 +487,7 @@ export async function scrapeYahoo(options: {
       }
 
       try {
-        await db.execute({
+        const insertResult = await db.execute({
           sql: `
             INSERT OR IGNORE INTO articles (
               media_source_id, original_id, original_url, title, content, summary,
@@ -516,6 +517,12 @@ export async function scrapeYahoo(options: {
           ],
         });
         inserted++;
+
+        // 自動分類文章
+        if (insertResult.lastInsertRowid) {
+          const articleId = Number(insertResult.lastInsertRowid);
+          await autoClassifyArticle(articleId, article.title);
+        }
 
         if (article.cluster_id) {
           await db.execute({

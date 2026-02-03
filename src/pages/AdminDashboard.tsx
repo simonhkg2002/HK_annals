@@ -15,12 +15,14 @@ import {
   enableNews,
   setNewsSeriesId,
   createNewsSeries,
+  updateNewsSeries,
   deleteNewsSeries,
   AdminUser,
   NewsSeries,
   NewsItemWithSimilarity,
 } from '../lib/data';
 import { Button, Input, Card, Badge } from '../components/ui/primitives';
+import { TagInput } from '../components/TagInput';
 import {
   Trash2,
   RefreshCw,
@@ -42,6 +44,7 @@ import {
   Star,
   FileX,
   FileText,
+  Pencil,
 } from 'lucide-react';
 import {
   LineChart,
@@ -82,9 +85,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
   const [dailyStats, setDailyStats] = useState<{ date: string; count: number }[]>([]);
   const [showSeriesModal, setShowSeriesModal] = useState(false);
   const [selectedArticle, setSelectedArticle] = useState<NewsItemWithAdmin | null>(null);
+  const [editingSeriesId, setEditingSeriesId] = useState<number | null>(null); // 編輯中的系列 ID
   const [newSeriesName, setNewSeriesName] = useState('');
   const [newSeriesDesc, setNewSeriesDesc] = useState('');
   const [newSeriesColor, setNewSeriesColor] = useState('#3B82F6');
+  const [newSeriesKeywords, setNewSeriesKeywords] = useState<string[]>([]); // 關鍵詞列表
+  const [newSeriesAutoAdd, setNewSeriesAutoAdd] = useState(true); // 是否啟用自動加入
 
   // 分頁狀態
   const [currentPage, setCurrentPage] = useState(1);
@@ -328,7 +334,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
     if (!newSeriesName.trim()) return;
 
     try {
-      const id = await createNewsSeries(newSeriesName, newSeriesDesc || null, newSeriesColor);
+      const id = await createNewsSeries(
+        newSeriesName,
+        newSeriesDesc || null,
+        newSeriesColor,
+        newSeriesKeywords,
+        newSeriesAutoAdd
+      );
       setSeries((prev) => [
         {
           id,
@@ -337,16 +349,70 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
           color: newSeriesColor,
           isActive: true,
           createdAt: new Date().toISOString(),
+          keywords: newSeriesKeywords,
+          autoAddEnabled: newSeriesAutoAdd,
         },
         ...prev,
       ]);
       setNewSeriesName('');
       setNewSeriesDesc('');
       setNewSeriesColor('#3B82F6');
+      setNewSeriesKeywords([]);
+      setNewSeriesAutoAdd(true);
       setShowSeriesModal(false);
     } catch (error) {
       console.error('Failed to create series:', error);
     }
+  };
+
+  // 更新系列
+  const handleUpdateSeries = async () => {
+    if (!editingSeriesId || !newSeriesName.trim()) return;
+
+    try {
+      await updateNewsSeries(
+        editingSeriesId,
+        newSeriesName,
+        newSeriesDesc || null,
+        newSeriesColor,
+        newSeriesKeywords,
+        newSeriesAutoAdd
+      );
+      setSeries((prev) =>
+        prev.map((s) =>
+          s.id === editingSeriesId
+            ? {
+                ...s,
+                name: newSeriesName,
+                description: newSeriesDesc || null,
+                color: newSeriesColor,
+                keywords: newSeriesKeywords,
+                autoAddEnabled: newSeriesAutoAdd,
+              }
+            : s
+        )
+      );
+      setNewSeriesName('');
+      setNewSeriesDesc('');
+      setNewSeriesColor('#3B82F6');
+      setNewSeriesKeywords([]);
+      setNewSeriesAutoAdd(true);
+      setEditingSeriesId(null);
+      setShowSeriesModal(false);
+    } catch (error) {
+      console.error('Failed to update series:', error);
+    }
+  };
+
+  // 開啟編輯系列對話框
+  const handleEditSeries = (s: NewsSeries) => {
+    setEditingSeriesId(s.id);
+    setNewSeriesName(s.name);
+    setNewSeriesDesc(s.description || '');
+    setNewSeriesColor(s.color);
+    setNewSeriesKeywords(s.keywords || []);
+    setNewSeriesAutoAdd(s.autoAddEnabled !== false);
+    setShowSeriesModal(true);
   };
 
   // 刪除系列
@@ -500,18 +566,41 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
                 {series.map((s) => (
                   <div
                     key={s.id}
-                    className="flex items-center gap-2 p-2 rounded-lg hover:bg-muted/50 group"
+                    className="flex items-start gap-2 p-2 rounded-lg hover:bg-muted/50 group"
                   >
                     <div
-                      className="w-3 h-3 rounded-full"
+                      className="w-3 h-3 rounded-full mt-1"
                       style={{ backgroundColor: s.color }}
                     ></div>
-                    <span className="flex-1">{s.name}</span>
-                    {s.description && (
-                      <span className="text-xs text-muted-foreground truncate max-w-[80px]">
-                        {s.description}
-                      </span>
-                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{s.name}</span>
+                        {s.autoAddEnabled === false && (
+                          <Badge variant="outline" className="text-xs">已停用</Badge>
+                        )}
+                      </div>
+                      {s.description && (
+                        <p className="text-xs text-muted-foreground truncate">
+                          {s.description}
+                        </p>
+                      )}
+                      {s.keywords && s.keywords.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {s.keywords.map((kw, i) => (
+                            <span key={i} className="text-xs bg-muted px-1.5 py-0.5 rounded">
+                              {kw}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => handleEditSeries(s)}
+                      className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-blue-100 text-muted-foreground hover:text-blue-600 transition-all"
+                      title="編輯系列"
+                    >
+                      <Pencil size={14} />
+                    </button>
                     <button
                       onClick={() => handleDeleteSeries(s.id)}
                       className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-100 text-muted-foreground hover:text-red-600 transition-all"
@@ -884,14 +973,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
         </div>
       )}
 
-      {/* 新增系列 Modal */}
+      {/* 新增/編輯系列 Modal */}
       {showSeriesModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="w-full max-w-md p-6 m-4">
+          <Card className="w-full max-w-md p-6 m-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold">新增新聞系列</h3>
+              <h3 className="font-bold">{editingSeriesId ? '編輯' : '新增'}新聞系列</h3>
               <button
-                onClick={() => setShowSeriesModal(false)}
+                onClick={() => {
+                  setShowSeriesModal(false);
+                  setEditingSeriesId(null);
+                  setNewSeriesName('');
+                  setNewSeriesDesc('');
+                  setNewSeriesColor('#3B82F6');
+                  setNewSeriesKeywords([]);
+                  setNewSeriesAutoAdd(true);
+                }}
                 className="text-muted-foreground hover:text-foreground"
               >
                 <X size={20} />
@@ -966,20 +1063,61 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
                   />
                 </div>
               </div>
+
+              {/* 關鍵詞輸入 */}
+              <div>
+                <label className="text-sm font-medium">關鍵詞（自動分類用）</label>
+                <p className="text-xs text-muted-foreground mb-2">
+                  輸入關鍵詞後按 Enter 新增。標題包含任一關鍵詞的新聞將自動加入此系列。
+                </p>
+                <TagInput
+                  tags={newSeriesKeywords}
+                  onChange={setNewSeriesKeywords}
+                  placeholder="例如：大火、示威、北都..."
+                />
+              </div>
+
+              {/* 自動加入開關 */}
+              <div className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
+                <div>
+                  <label className="text-sm font-medium">啟用自動加入</label>
+                  <p className="text-xs text-muted-foreground">
+                    關閉後將不再自動加入新聞到此系列
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newSeriesAutoAdd}
+                    onChange={(e) => setNewSeriesAutoAdd(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                </label>
+              </div>
+
               <div className="flex gap-2 pt-2">
                 <Button
                   variant="outline"
                   className="flex-1"
-                  onClick={() => setShowSeriesModal(false)}
+                  onClick={() => {
+                    setShowSeriesModal(false);
+                    setEditingSeriesId(null);
+                    setNewSeriesName('');
+                    setNewSeriesDesc('');
+                    setNewSeriesColor('#3B82F6');
+                    setNewSeriesKeywords([]);
+                    setNewSeriesAutoAdd(true);
+                  }}
                 >
                   取消
                 </Button>
                 <Button
                   className="flex-1"
-                  onClick={handleCreateSeries}
+                  onClick={editingSeriesId ? handleUpdateSeries : handleCreateSeries}
                   disabled={!newSeriesName.trim()}
                 >
-                  新增
+                  {editingSeriesId ? '更新' : '新增'}
                 </Button>
               </div>
             </div>
