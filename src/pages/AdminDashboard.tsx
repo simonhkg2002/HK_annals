@@ -17,6 +17,9 @@ import {
   createNewsSeries,
   updateNewsSeries,
   deleteNewsSeries,
+  fetchPendingReviews,
+  approveAutoClassified,
+  rejectAutoClassified,
   AdminUser,
   NewsSeries,
   NewsItemWithSimilarity,
@@ -45,6 +48,7 @@ import {
   FileX,
   FileText,
   Pencil,
+  Check,
 } from 'lucide-react';
 import {
   LineChart,
@@ -92,6 +96,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
   const [newSeriesKeywords, setNewSeriesKeywords] = useState<string[]>([]); // 關鍵詞列表
   const [newSeriesAutoAdd, setNewSeriesAutoAdd] = useState(true); // 是否啟用自動加入
 
+  // 待複核新聞
+  const [pendingReviews, setPendingReviews] = useState<NewsItemWithAdmin[]>([]);
+
   // 分頁狀態
   const [currentPage, setCurrentPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
@@ -131,18 +138,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
       setLoading(true);
       try {
         const offset = (currentPage - 1) * PAGE_SIZE;
-        const [newsData, countData, statsData, dailyData, seriesData] = await Promise.all([
+        const [newsData, countData, statsData, dailyData, seriesData, pendingData] = await Promise.all([
           fetchNewsForAdminBySeries(PAGE_SIZE, true, offset, selectedSeriesId),
           fetchNewsCountForAdminBySeries(true, selectedSeriesId),
           fetchStatsBySeries(selectedSeriesId),
           fetchDailyStatsBySeries(7, selectedSeriesId),
           fetchNewsSeries(),
+          fetchPendingReviews(20, 0, null, ''), // 載入前 20 筆待複核
         ]);
         setNews(newsData);
         setTotalCount(countData);
         setStats(statsData);
         setDailyStats(dailyData);
         setSeries(seriesData);
+        setPendingReviews(pendingData);
       } catch (error) {
         console.error('Failed to fetch data:', error);
       } finally {
@@ -415,6 +424,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
     setShowSeriesModal(true);
   };
 
+  // 切換系列自動加入狀態
+  const handleToggleAutoAdd = async (s: NewsSeries) => {
+    try {
+      const newAutoAddEnabled = !s.autoAddEnabled;
+      await updateNewsSeries(
+        s.id,
+        s.name,
+        s.description,
+        s.color,
+        s.keywords || [],
+        newAutoAddEnabled
+      );
+      setSeries((prev) =>
+        prev.map((series) =>
+          series.id === s.id ? { ...series, autoAddEnabled: newAutoAddEnabled } : series
+        )
+      );
+    } catch (error) {
+      console.error('Failed to toggle auto add:', error);
+    }
+  };
+
   // 刪除系列
   const handleDeleteSeries = async (seriesId: number) => {
     if (!confirm('確定要刪除此系列嗎？使用此系列的新聞將會變為無系列。')) return;
@@ -428,6 +459,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
       );
     } catch (error) {
       console.error('Failed to delete series:', error);
+    }
+  };
+
+  // 同意自動分類
+  const handleApproveReview = async (articleId: string) => {
+    try {
+      await approveAutoClassified(articleId);
+      setPendingReviews((prev) => prev.filter((n) => n.id !== articleId));
+    } catch (error) {
+      console.error('Failed to approve:', error);
+    }
+  };
+
+  // 拒絕自動分類
+  const handleRejectReview = async (articleId: string) => {
+    try {
+      await rejectAutoClassified(articleId);
+      setPendingReviews((prev) => prev.filter((n) => n.id !== articleId));
+      // 同時從新聞列表中移除系列
+      setNews((prev) =>
+        prev.map((n) => (n.id === articleId ? { ...n, seriesId: null } : n))
+      );
+    } catch (error) {
+      console.error('Failed to reject:', error);
     }
   };
 
@@ -575,9 +630,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{s.name}</span>
-                        {s.autoAddEnabled === false && (
-                          <Badge variant="outline" className="text-xs">已停用</Badge>
-                        )}
                       </div>
                       {s.description && (
                         <p className="text-xs text-muted-foreground truncate">
@@ -593,6 +645,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
                           ))}
                         </div>
                       )}
+                    </div>
+                    {/* 自動加入開關 */}
+                    <div className="flex items-center gap-1" title="自動加入">
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={s.autoAddEnabled !== false}
+                          onChange={() => handleToggleAutoAdd(s)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                      </label>
                     </div>
                     <button
                       onClick={() => handleEditSeries(s)}
@@ -614,6 +678,78 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
                   <p className="text-sm text-muted-foreground">暫無系列</p>
                 )}
               </div>
+            </Card>
+
+            {/* 待複核區域 */}
+            <Card className="p-6 border-amber-200 bg-amber-50/50">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-bold text-amber-900">待複核新聞</h3>
+                  <Badge className="bg-amber-500">{pendingReviews.length}</Badge>
+                </div>
+                <p className="text-sm text-amber-700">自動分類的新聞需要人工確認</p>
+              </div>
+
+              {pendingReviews.length === 0 ? (
+                <div className="text-center py-8 text-amber-700">
+                  <p className="text-sm">目前沒有待複核的新聞</p>
+                  <p className="text-xs text-amber-600 mt-1">自動分類的新聞會顯示在這裡</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {pendingReviews.map((item) => {
+                    const seriesInfo = series.find((s) => s.id === item.seriesId);
+                    return (
+                      <div
+                        key={item.id}
+                        className="flex items-start gap-4 p-4 bg-white rounded-lg border border-amber-200"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-medium mb-2 line-clamp-2">{item.title}</h4>
+                          <div className="flex flex-wrap items-center gap-2 text-sm">
+                            <Badge
+                              variant="outline"
+                              style={{ borderColor: sourceColors[item.source] || '#6B7280' }}
+                            >
+                              {item.source}
+                            </Badge>
+                            {seriesInfo && (
+                              <Badge style={{ backgroundColor: seriesInfo.color, color: 'white' }}>
+                                → {seriesInfo.name}
+                              </Badge>
+                            )}
+                            <span className="text-muted-foreground">
+                              {new Date(item.publishedAt).toLocaleString('zh-HK', {
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => handleApproveReview(item.id)}
+                            className="bg-green-600 hover:bg-green-700 whitespace-nowrap"
+                          >
+                            <Check className="w-4 h-4 mr-1" /> 同意
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleRejectReview(item.id)}
+                            className="border-red-600 text-red-600 hover:bg-red-50 whitespace-nowrap"
+                          >
+                            <X className="w-4 h-4 mr-1" /> 拒絕
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </Card>
           </div>
 
@@ -1075,25 +1211,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
                   onChange={setNewSeriesKeywords}
                   placeholder="例如：大火、示威、北都..."
                 />
-              </div>
-
-              {/* 自動加入開關 */}
-              <div className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
-                <div>
-                  <label className="text-sm font-medium">啟用自動加入</label>
-                  <p className="text-xs text-muted-foreground">
-                    關閉後將不再自動加入新聞到此系列
-                  </p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={newSeriesAutoAdd}
-                    onChange={(e) => setNewSeriesAutoAdd(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                </label>
               </div>
 
               <div className="flex gap-2 pt-2">
