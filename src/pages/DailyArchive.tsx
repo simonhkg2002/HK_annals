@@ -130,7 +130,7 @@ export const DailyArchive: React.FC = () => {
                   <div className="absolute -left-3 top-0 bg-background border rounded-full px-2 py-1 text-xs font-bold text-muted-foreground">
                     {time}
                   </div>
-                  <div className="mb-4 text-sm text-muted-foreground pl-2">
+                  <div className="mb-4 pt-8 text-sm text-muted-foreground pl-2">
                     {items.length} 則新聞
                   </div>
                   <div className="space-y-6">
