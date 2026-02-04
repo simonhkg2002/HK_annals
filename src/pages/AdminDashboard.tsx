@@ -61,6 +61,7 @@ import {
 } from 'recharts';
 import { NewsItem } from '../types';
 import { format } from 'date-fns';
+import { sourceColors } from '../lib/utils';
 
 interface AdminDashboardProps {
   user: AdminUser | null;
@@ -680,78 +681,80 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
               </div>
             </Card>
 
-            {/* 待複核區域 */}
-            <Card className="p-6 border-amber-200 bg-amber-50/50">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <h3 className="font-bold text-amber-900">待複核新聞</h3>
-                  <Badge className="bg-amber-500">{pendingReviews.length}</Badge>
-                </div>
-                <p className="text-sm text-amber-700">自動分類的新聞需要人工確認</p>
-              </div>
+          </div>
 
-              {pendingReviews.length === 0 ? (
-                <div className="text-center py-8 text-amber-700">
-                  <p className="text-sm">目前沒有待複核的新聞</p>
-                  <p className="text-xs text-amber-600 mt-1">自動分類的新聞會顯示在這裡</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {pendingReviews.map((item) => {
-                    const seriesInfo = series.find((s) => s.id === item.seriesId);
-                    return (
-                      <div
-                        key={item.id}
-                        className="flex items-start gap-4 p-4 bg-white rounded-lg border border-amber-200"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <h4 className="font-medium mb-2 line-clamp-2">{item.title}</h4>
-                          <div className="flex flex-wrap items-center gap-2 text-sm">
-                            <Badge
-                              variant="outline"
-                              style={{ borderColor: sourceColors[item.source] || '#6B7280' }}
-                            >
-                              {item.source}
-                            </Badge>
-                            {seriesInfo && (
-                              <Badge style={{ backgroundColor: seriesInfo.color, color: 'white' }}>
-                                → {seriesInfo.name}
-                              </Badge>
-                            )}
-                            <span className="text-muted-foreground">
-                              {new Date(item.publishedAt).toLocaleString('zh-HK', {
-                                month: 'short',
-                                day: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="flex gap-2">
+          {/* 待複核區域 - 100% 寬度 */}
+          <Card className="p-6 border-amber-200 bg-amber-50/50 mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-amber-900">待複核新聞</h3>
+                <Badge className="bg-amber-500">{pendingReviews.length}</Badge>
+              </div>
+              {pendingReviews.length > 2 && (
+                <p className="text-xs text-amber-600">↓ 滑動查看更多</p>
+              )}
+            </div>
+
+            {pendingReviews.length === 0 ? (
+              <div className="text-center py-6 text-amber-700">
+                <p className="text-sm">目前沒有待複核的新聞</p>
+                <p className="text-xs text-amber-600 mt-1">自動分類的新聞會顯示在這裡</p>
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-[240px] overflow-y-auto pr-1">
+                {pendingReviews.map((item) => {
+                  const seriesInfo = series.find((s) => s.id === item.seriesId);
+                  return (
+                    <div
+                      key={item.id}
+                      className="flex items-center gap-4 p-3 bg-white rounded-lg border border-amber-200 shadow-sm"
+                    >
+                      <h4 className="font-medium text-sm flex-1 line-clamp-1">{item.title}</h4>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <Badge
+                          variant="outline"
+                          className="text-xs"
+                          style={{ borderColor: sourceColors[item.source] || '#6B7280' }}
+                        >
+                          {item.source}
+                        </Badge>
+                        {seriesInfo && (
+                          <Badge className="text-xs" style={{ backgroundColor: seriesInfo.color, color: 'white' }}>
+                            → {seriesInfo.name}
+                          </Badge>
+                        )}
+                        <span className="text-xs text-muted-foreground whitespace-nowrap">
+                          {new Date(item.publishedAt).toLocaleString('zh-HK', {
+                            month: 'short',
+                            day: 'numeric',
+                          })}
+                        </span>
+                        <div className="flex gap-1.5">
                           <Button
                             size="sm"
                             onClick={() => handleApproveReview(item.id)}
-                            className="bg-green-600 hover:bg-green-700 whitespace-nowrap"
+                            className="bg-green-600 hover:bg-green-700 h-7 px-2"
+                            title="同意分類"
                           >
-                            <Check className="w-4 h-4 mr-1" /> 同意
+                            <Check className="w-3.5 h-3.5" />
                           </Button>
                           <Button
                             size="sm"
                             variant="outline"
                             onClick={() => handleRejectReview(item.id)}
-                            className="border-red-600 text-red-600 hover:bg-red-50 whitespace-nowrap"
+                            className="border-red-500 text-red-500 hover:bg-red-50 h-7 px-2"
+                            title="拒絕分類"
                           >
-                            <X className="w-4 h-4 mr-1" /> 拒絕
+                            <X className="w-3.5 h-3.5" />
                           </Button>
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </Card>
-          </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
 
           {/* 新聞列表 */}
           <Card className="overflow-hidden">
