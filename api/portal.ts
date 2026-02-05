@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { db, dbToNewsItem, DBArticle, calculateSimpleSimilarity, SOURCE_PRIORITY } from './_lib/db';
-import { createSession, hashPassword, deleteSession, getTokenFromRequest, validateSession, requireAuth } from './_lib/auth';
+import { db, dbToNewsItem, DBArticle, calculateSimpleSimilarity, SOURCE_PRIORITY } from './lib/db';
+import { createSession, hashPassword, deleteSession, getTokenFromRequest, validateSession, requireAuth } from './lib/auth';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const action = req.query.action as string;

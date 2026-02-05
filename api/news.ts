@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { db, ARTICLE_SELECT_BASE, dbToNewsItem, DBArticle, calculateSimpleSimilarity } from './_lib/db';
+import { db, ARTICLE_SELECT_BASE, dbToNewsItem, DBArticle, calculateSimpleSimilarity } from './lib/db';
 
 // 分類名稱到 code 的映射
 const CATEGORY_TO_CODE: Record<string, string> = {
