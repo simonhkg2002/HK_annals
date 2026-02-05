@@ -1,294 +1,265 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { db, dbToNewsItem, DBArticle, calculateSimpleSimilarity, SOURCE_PRIORITY } from './lib/db';
-import { createSession, hashPassword, deleteSession, getTokenFromRequest, validateSession, requireAuth } from './lib/auth';
+import { createClient } from '@libsql/client';
+
+const db = createClient({
+  url: process.env.TURSO_DATABASE_URL || '',
+  authToken: process.env.TURSO_AUTH_TOKEN || '',
+});
+
+const SOURCE_MAP: Record<string, string> = { hk01: 'HK01', rthk: 'RTHK', mingpao: '明報', yahoo: 'Yahoo' };
+const CATEGORY_MAP: Record<string, string> = { local: '港聞', society: '社會', politics: '政治', economy: '財經', international: '國際', china: '中國', sports: '體育', entertainment: '娛樂' };
+const SOURCE_PRIORITY: Record<string, number> = { HK01: 1, Yahoo: 2, RTHK: 3, '明報': 4 };
+
+function dbToNewsItem(row: Record<string, unknown>) {
+  return {
+    id: String(row.id),
+    title: row.title as string,
+    url: row.original_url as string,
+    source: SOURCE_MAP[row.source_code as string] || 'HK01',
+    category: CATEGORY_MAP[row.category_code as string] || '港聞',
+    publishedAt: row.published_at as string,
+    thumbnail: row.thumbnail_url as string | null,
+    summary: (row.summary as string) || '',
+  };
+}
+
+function calculateSimpleSimilarity(t1: string, t2: string): number {
+  if (t1 === t2) return 1;
+  if (!t1 || !t2) return 0;
+  const c1 = new Set(t1), c2 = new Set(t2);
+  let common = 0;
+  for (const c of c1) if (c2.has(c)) common++;
+  return common / Math.max(c1.size, c2.size);
+}
+
+// Session management
+const sessions = new Map<string, { userId: number; username: string; displayName: string; expiresAt: number }>();
+
+function generateToken(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  for (let i = 0; i < 64; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
+  return result;
+}
+
+function createSession(userId: number, username: string, displayName: string): string {
+  const token = generateToken();
+  sessions.set(token, { userId, username, displayName, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
+  return token;
+}
+
+function getToken(req: VercelRequest): string | null {
+  const auth = req.headers.authorization;
+  if (auth?.startsWith('Bearer ')) return auth.slice(7);
+  return typeof req.query.token === 'string' ? req.query.token : null;
+}
+
+function validateSession(token: string | null) {
+  if (!token) return null;
+  const session = sessions.get(token);
+  if (!session || Date.now() > session.expiresAt) { if (session) sessions.delete(token); return null; }
+  return session;
+}
+
+async function hashPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const action = req.query.action as string;
 
   try {
-    // Auth actions (no auth required)
-    if (action === 'login' && req.method === 'POST') return handleLogin(req, res);
-    if (action === 'logout' && req.method === 'POST') return handleLogout(req, res);
-    if (action === 'verify' && req.method === 'GET') return handleVerify(req, res);
+    // Auth
+    if (action === 'login' && req.method === 'POST') {
+      const { username, password } = req.body || {};
+      if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
+      const hash = await hashPassword(password);
+      const result = await db.execute({ sql: `SELECT id, username, display_name, is_active FROM admin_users WHERE username = ? AND password_hash = ? AND is_active = 1`, args: [username, hash] });
+      if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
+      const row = result.rows[0] as Record<string, unknown>;
+      await db.execute({ sql: `UPDATE admin_users SET last_login_at = datetime('now') WHERE id = ?`, args: [row.id as number] });
+      const token = createSession(row.id as number, row.username as string, (row.display_name as string) || (row.username as string));
+      return res.status(200).json({ token, user: { id: row.id, username: row.username, displayName: row.display_name || row.username, isActive: true } });
+    }
+
+    if (action === 'logout' && req.method === 'POST') {
+      const token = getToken(req);
+      if (token) sessions.delete(token);
+      return res.status(200).json({ success: true });
+    }
+
+    if (action === 'verify') {
+      const session = validateSession(getToken(req));
+      if (!session) return res.status(401).json({ error: 'Unauthorized' });
+      return res.status(200).json({ user: { id: session.userId, username: session.username, displayName: session.displayName, isActive: true } });
+    }
 
     // All other actions require auth
-    const session = requireAuth(req, res);
-    if (!session) return;
+    const session = validateSession(getToken(req));
+    if (!session) return res.status(401).json({ error: 'Unauthorized' });
 
-    // News actions
-    if (action === 'news-list') return handleNewsList(req, res);
-    if (action === 'news-count') return handleNewsCount(req, res);
-    if (action === 'news-disable' && req.method === 'POST') return handleNewsDisable(req, res, session.username);
-    if (action === 'news-enable' && req.method === 'POST') return handleNewsEnable(req, res);
-    if (action === 'news-set-series' && req.method === 'POST') return handleNewsSetSeries(req, res);
-    if (action === 'news-bookmark-position') return handleBookmarkPosition(req, res);
+    // News management
+    if (action === 'news-list') {
+      const limit = Math.min(Number(req.query.limit) || 50, 200);
+      const offset = Number(req.query.offset) || 0;
+      const includeDisabled = req.query.includeDisabled !== 'false';
+      const seriesId = req.query.seriesId as string;
+      const where: string[] = [];
+      const args: (string | number)[] = [];
+      if (!includeDisabled) where.push('COALESCE(a.is_disabled, 0) = 0');
+      if (seriesId) { where.push('a.series_id = ?'); args.push(seriesId); }
+      args.push(limit, offset);
+      const result = await db.execute({ sql: `SELECT a.*, a.is_disabled, a.series_id, a.title_normalized, a.cluster_id, ms.code as source_code, c.code as category_code FROM articles a LEFT JOIN media_sources ms ON a.media_source_id = ms.id LEFT JOIN categories c ON a.category_id = c.id ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY a.published_at DESC LIMIT ? OFFSET ?`, args });
+      const items = result.rows.map(r => {
+        const row = r as Record<string, unknown>;
+        const thumb = row.thumbnail_url as string | null;
+        return { ...dbToNewsItem(row), isDisabled: row.is_disabled === 1, seriesId: row.series_id as number | null, isSimilarDuplicate: false, similarToId: null as string | null, titleNormalized: row.title_normalized as string | null, hasThumbnail: thumb !== null && thumb.trim().length > 0, clusterId: row.cluster_id as string | null, publishedAtTime: new Date(row.published_at as string).getTime() };
+      });
+      // Similarity detection
+      const SIX_HOURS = 6 * 60 * 60 * 1000;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].isSimilarDuplicate) continue;
+        for (let j = 0; j < items.length; j++) {
+          if (i === j || items[j].isSimilarDuplicate) continue;
+          if (Math.abs((items[i].publishedAtTime || 0) - (items[j].publishedAtTime || 0)) > SIX_HOURS) continue;
+          let similar = false;
+          if (items[i].clusterId && items[j].clusterId && items[i].clusterId === items[j].clusterId) similar = true;
+          else if (items[i].titleNormalized && items[j].titleNormalized && calculateSimpleSimilarity(items[i].titleNormalized, items[j].titleNormalized) >= 0.4) similar = true;
+          if (similar) {
+            const pi = SOURCE_PRIORITY[items[i].source] ?? 99, pj = SOURCE_PRIORITY[items[j].source] ?? 99;
+            if (pi > pj) { items[i].isSimilarDuplicate = true; items[i].similarToId = items[j].id; break; }
+            else if (pj > pi) { items[j].isSimilarDuplicate = true; items[j].similarToId = items[i].id; }
+          }
+        }
+      }
+      return res.status(200).json(items.map(({ publishedAtTime, clusterId, ...rest }) => rest));
+    }
 
-    // Series actions
-    if (action === 'series-list') return handleSeriesList(req, res);
-    if (action === 'series-create' && req.method === 'POST') return handleSeriesCreate(req, res);
-    if (action === 'series-update' && req.method === 'POST') return handleSeriesUpdate(req, res);
-    if (action === 'series-delete' && req.method === 'POST') return handleSeriesDelete(req, res);
+    if (action === 'news-count') {
+      const includeDisabled = req.query.includeDisabled !== 'false';
+      const seriesId = req.query.seriesId as string;
+      const where: string[] = [];
+      const args: (string | number)[] = [];
+      if (!includeDisabled) where.push('COALESCE(is_disabled, 0) = 0');
+      if (seriesId) { where.push('series_id = ?'); args.push(seriesId); }
+      const result = await db.execute({ sql: `SELECT COUNT(*) as count FROM articles ${where.length ? 'WHERE ' + where.join(' AND ') : ''}`, args });
+      return res.status(200).json({ count: (result.rows[0] as Record<string, unknown>).count as number });
+    }
 
-    // Review actions
-    if (action === 'review-list') return handleReviewList(req, res);
-    if (action === 'review-count') return handleReviewCount(req, res);
-    if (action === 'review-approve' && req.method === 'POST') return handleReviewApprove(req, res);
-    if (action === 'review-reject' && req.method === 'POST') return handleReviewReject(req, res);
+    if (action === 'news-disable' && req.method === 'POST') {
+      const { articleId } = req.body || {};
+      if (!articleId) return res.status(400).json({ error: 'Missing articleId' });
+      await db.execute({ sql: `UPDATE articles SET is_disabled = 1, disabled_at = datetime('now'), disabled_by = ? WHERE id = ?`, args: [session.username, articleId] });
+      return res.status(200).json({ success: true });
+    }
+
+    if (action === 'news-enable' && req.method === 'POST') {
+      const { articleId } = req.body || {};
+      if (!articleId) return res.status(400).json({ error: 'Missing articleId' });
+      await db.execute({ sql: `UPDATE articles SET is_disabled = 0, disabled_at = NULL, disabled_by = NULL WHERE id = ?`, args: [articleId] });
+      return res.status(200).json({ success: true });
+    }
+
+    if (action === 'news-set-series' && req.method === 'POST') {
+      const { articleId, seriesId } = req.body || {};
+      if (!articleId) return res.status(400).json({ error: 'Missing articleId' });
+      await db.execute({ sql: `UPDATE articles SET series_id = ? WHERE id = ?`, args: [seriesId ?? null, articleId] });
+      return res.status(200).json({ success: true });
+    }
+
+    if (action === 'news-bookmark-position') {
+      const articleId = req.query.articleId as string;
+      const pageSize = Number(req.query.pageSize) || 100;
+      if (!articleId) return res.status(400).json({ error: 'Missing articleId' });
+      const artResult = await db.execute({ sql: `SELECT published_at FROM articles WHERE id = ?`, args: [articleId] });
+      if (artResult.rows.length === 0) return res.status(200).json({ page: 1 });
+      const pubAt = (artResult.rows[0] as Record<string, unknown>).published_at as string;
+      const countResult = await db.execute({ sql: `SELECT COUNT(*) as count FROM articles WHERE published_at > ?`, args: [pubAt] });
+      const pos = (countResult.rows[0] as Record<string, unknown>).count as number;
+      return res.status(200).json({ page: Math.floor(pos / pageSize) + 1 });
+    }
+
+    // Series management
+    if (action === 'series-list') {
+      const result = await db.execute(`SELECT id, name, description, color, is_active, created_at, keywords, auto_add_enabled FROM news_series WHERE is_active = 1 ORDER BY created_at DESC`);
+      return res.status(200).json(result.rows.map(r => {
+        const row = r as Record<string, unknown>;
+        return { id: row.id, name: row.name, description: row.description, color: row.color, isActive: row.is_active === 1, createdAt: row.created_at, keywords: row.keywords ? JSON.parse(row.keywords as string) : [], autoAddEnabled: row.auto_add_enabled === 1 };
+      }));
+    }
+
+    if (action === 'series-create' && req.method === 'POST') {
+      const { name, description, color, keywords, autoAddEnabled } = req.body || {};
+      if (!name) return res.status(400).json({ error: 'Missing name' });
+      const result = await db.execute({ sql: `INSERT INTO news_series (name, description, color, keywords, auto_add_enabled) VALUES (?, ?, ?, ?, ?)`, args: [name, description || null, color || '#3b82f6', JSON.stringify(keywords || []), autoAddEnabled !== false ? 1 : 0] });
+      return res.status(200).json({ success: true, id: Number(result.lastInsertRowid) });
+    }
+
+    if (action === 'series-update' && req.method === 'POST') {
+      const { seriesId, name, description, color, keywords, autoAddEnabled } = req.body || {};
+      if (!seriesId || !name) return res.status(400).json({ error: 'Missing fields' });
+      await db.execute({ sql: `UPDATE news_series SET name = ?, description = ?, color = ?, keywords = ?, auto_add_enabled = ?, updated_at = datetime('now') WHERE id = ?`, args: [name, description || null, color || '#3b82f6', JSON.stringify(keywords || []), autoAddEnabled !== false ? 1 : 0, seriesId] });
+      return res.status(200).json({ success: true });
+    }
+
+    if (action === 'series-delete' && req.method === 'POST') {
+      const { seriesId } = req.body || {};
+      if (!seriesId) return res.status(400).json({ error: 'Missing seriesId' });
+      await db.execute({ sql: `UPDATE articles SET series_id = NULL WHERE series_id = ?`, args: [seriesId] });
+      await db.execute({ sql: `DELETE FROM news_series WHERE id = ?`, args: [seriesId] });
+      return res.status(200).json({ success: true });
+    }
+
+    // Review management
+    if (action === 'review-list') {
+      const limit = Math.min(Number(req.query.limit) || 100, 200);
+      const offset = Number(req.query.offset) || 0;
+      const seriesId = req.query.seriesId as string;
+      const q = req.query.q as string;
+      const where: string[] = ["a.review_status = 'pending'"];
+      const args: (string | number)[] = [];
+      if (seriesId) { where.push('a.series_id = ?'); args.push(seriesId); }
+      if (q) { where.push('a.title LIKE ?'); args.push(`%${q}%`); }
+      args.push(limit, offset);
+      const result = await db.execute({ sql: `SELECT a.*, a.is_disabled, a.series_id, a.title_normalized, a.matched_keyword, ms.code as source_code, c.code as category_code FROM articles a LEFT JOIN media_sources ms ON a.media_source_id = ms.id LEFT JOIN categories c ON a.category_id = c.id WHERE ${where.join(' AND ')} ORDER BY a.auto_classified_at DESC LIMIT ? OFFSET ?`, args });
+      return res.status(200).json(result.rows.map(r => {
+        const row = r as Record<string, unknown>;
+        const thumb = row.thumbnail_url as string | null;
+        return { ...dbToNewsItem(row), isDisabled: row.is_disabled === 1, seriesId: row.series_id as number | null, isSimilarDuplicate: false, similarToId: null, titleNormalized: row.title_normalized, hasThumbnail: thumb !== null && thumb.trim().length > 0, matchedKeyword: row.matched_keyword };
+      }));
+    }
+
+    if (action === 'review-count') {
+      const seriesId = req.query.seriesId as string;
+      const q = req.query.q as string;
+      const where: string[] = ["review_status = 'pending'"];
+      const args: (string | number)[] = [];
+      if (seriesId) { where.push('series_id = ?'); args.push(seriesId); }
+      if (q) { where.push('title LIKE ?'); args.push(`%${q}%`); }
+      const result = await db.execute({ sql: `SELECT COUNT(*) as count FROM articles WHERE ${where.join(' AND ')}`, args });
+      return res.status(200).json({ count: (result.rows[0] as Record<string, unknown>).count as number });
+    }
+
+    if (action === 'review-approve' && req.method === 'POST') {
+      const { articleId } = req.body || {};
+      if (!articleId) return res.status(400).json({ error: 'Missing articleId' });
+      await db.execute({ sql: `UPDATE articles SET review_status = 'approved' WHERE id = ?`, args: [articleId] });
+      return res.status(200).json({ success: true });
+    }
+
+    if (action === 'review-reject' && req.method === 'POST') {
+      const { articleId } = req.body || {};
+      if (!articleId) return res.status(400).json({ error: 'Missing articleId' });
+      await db.execute({ sql: `UPDATE articles SET series_id = NULL, review_status = 'rejected' WHERE id = ?`, args: [articleId] });
+      return res.status(200).json({ success: true });
+    }
 
     return res.status(400).json({ error: 'Invalid action' });
   } catch (error) {
     console.error('Portal API Error:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
-}
-
-// ============ Auth Handlers ============
-
-async function handleLogin(req: VercelRequest, res: VercelResponse) {
-  const { username, password } = req.body || {};
-  if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
-
-  const passwordHash = await hashPassword(password);
-  const result = await db.execute({
-    sql: `SELECT id, username, display_name, is_active, last_login_at FROM admin_users WHERE username = ? AND password_hash = ? AND is_active = 1`,
-    args: [username, passwordHash],
-  });
-
-  if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
-
-  const row = result.rows[0] as Record<string, unknown>;
-  await db.execute({ sql: `UPDATE admin_users SET last_login_at = datetime('now') WHERE id = ?`, args: [row.id as number] });
-
-  const token = createSession(row.id as number, row.username as string, (row.display_name as string) || (row.username as string));
-
-  return res.status(200).json({
-    token,
-    user: {
-      id: row.id as number,
-      username: row.username as string,
-      displayName: (row.display_name as string) || (row.username as string),
-      isActive: row.is_active === 1,
-      lastLoginAt: row.last_login_at as string | null,
-    },
-  });
-}
-
-async function handleLogout(req: VercelRequest, res: VercelResponse) {
-  const token = getTokenFromRequest(req);
-  if (token) deleteSession(token);
-  return res.status(200).json({ success: true });
-}
-
-async function handleVerify(req: VercelRequest, res: VercelResponse) {
-  const token = getTokenFromRequest(req);
-  const session = validateSession(token);
-  if (!session) return res.status(401).json({ error: 'Unauthorized' });
-
-  return res.status(200).json({
-    user: { id: session.userId, username: session.username, displayName: session.displayName, isActive: true, lastLoginAt: null },
-  });
-}
-
-// ============ News Handlers ============
-
-async function handleNewsList(req: VercelRequest, res: VercelResponse) {
-  const limit = Math.min(Number(req.query.limit) || 50, 200);
-  const offset = Number(req.query.offset) || 0;
-  const includeDisabled = req.query.includeDisabled !== 'false';
-  const seriesId = req.query.seriesId as string;
-
-  const whereClauses: string[] = [];
-  const args: (string | number)[] = [];
-
-  if (!includeDisabled) whereClauses.push('COALESCE(a.is_disabled, 0) = 0');
-  if (seriesId) { whereClauses.push('a.series_id = ?'); args.push(seriesId); }
-
-  const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-  args.push(limit, offset);
-
-  const result = await db.execute({
-    sql: `SELECT a.*, a.is_disabled, a.series_id, a.title_normalized, a.cluster_id, ms.code as source_code, ms.name_zh as source_name, c.code as category_code, c.name_zh as category_name FROM articles a LEFT JOIN media_sources ms ON a.media_source_id = ms.id LEFT JOIN categories c ON a.category_id = c.id ${whereClause} ORDER BY a.published_at DESC LIMIT ? OFFSET ?`,
-    args,
-  });
-
-  const newsItems = result.rows.map((row) => {
-    const r = row as Record<string, unknown>;
-    const thumbnail = r.thumbnail_url as string | null;
-    return {
-      ...dbToNewsItem(r as unknown as DBArticle),
-      isDisabled: r.is_disabled === 1,
-      seriesId: r.series_id as number | null,
-      isSimilarDuplicate: false,
-      similarToId: null as string | null,
-      titleNormalized: r.title_normalized as string | null,
-      hasThumbnail: thumbnail !== null && thumbnail.trim().length > 0,
-      clusterId: r.cluster_id as string | null,
-      publishedAtTime: new Date(r.published_at as string).getTime(),
-    };
-  });
-
-  // Similarity detection
-  const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
-  for (let i = 0; i < newsItems.length; i++) {
-    const current = newsItems[i];
-    if (current.isSimilarDuplicate) continue;
-    for (let j = 0; j < newsItems.length; j++) {
-      if (i === j) continue;
-      const other = newsItems[j];
-      if (other.isSimilarDuplicate) continue;
-      const timeDiff = Math.abs((current.publishedAtTime || 0) - (other.publishedAtTime || 0));
-      if (timeDiff > SIX_HOURS_MS) continue;
-      let isSimilar = false;
-      if (current.clusterId && other.clusterId && current.clusterId === other.clusterId) isSimilar = true;
-      else if (current.titleNormalized && other.titleNormalized && calculateSimpleSimilarity(current.titleNormalized, other.titleNormalized) >= 0.40) isSimilar = true;
-      if (isSimilar) {
-        const currentPriority = SOURCE_PRIORITY[current.source] ?? 99;
-        const otherPriority = SOURCE_PRIORITY[other.source] ?? 99;
-        if (currentPriority > otherPriority) { current.isSimilarDuplicate = true; current.similarToId = other.id; break; }
-        else if (otherPriority > currentPriority) { other.isSimilarDuplicate = true; other.similarToId = current.id; }
-      }
-    }
-  }
-
-  return res.status(200).json(newsItems.map(({ publishedAtTime, clusterId, ...rest }) => rest));
-}
-
-async function handleNewsCount(req: VercelRequest, res: VercelResponse) {
-  const includeDisabled = req.query.includeDisabled !== 'false';
-  const seriesId = req.query.seriesId as string;
-
-  const whereClauses: string[] = [];
-  const args: (string | number)[] = [];
-
-  if (!includeDisabled) whereClauses.push('COALESCE(is_disabled, 0) = 0');
-  if (seriesId) { whereClauses.push('series_id = ?'); args.push(seriesId); }
-
-  const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
-  const result = await db.execute({ sql: `SELECT COUNT(*) as count FROM articles ${whereClause}`, args });
-  return res.status(200).json({ count: result.rows[0].count as number });
-}
-
-async function handleNewsDisable(req: VercelRequest, res: VercelResponse, username: string) {
-  const { articleId } = req.body || {};
-  if (!articleId) return res.status(400).json({ error: 'Missing articleId' });
-  await db.execute({ sql: `UPDATE articles SET is_disabled = 1, disabled_at = datetime('now'), disabled_by = ? WHERE id = ?`, args: [username, articleId] });
-  return res.status(200).json({ success: true });
-}
-
-async function handleNewsEnable(req: VercelRequest, res: VercelResponse) {
-  const { articleId } = req.body || {};
-  if (!articleId) return res.status(400).json({ error: 'Missing articleId' });
-  await db.execute({ sql: `UPDATE articles SET is_disabled = 0, disabled_at = NULL, disabled_by = NULL WHERE id = ?`, args: [articleId] });
-  return res.status(200).json({ success: true });
-}
-
-async function handleNewsSetSeries(req: VercelRequest, res: VercelResponse) {
-  const { articleId, seriesId } = req.body || {};
-  if (!articleId) return res.status(400).json({ error: 'Missing articleId' });
-  await db.execute({ sql: `UPDATE articles SET series_id = ? WHERE id = ?`, args: [seriesId ?? null, articleId] });
-  return res.status(200).json({ success: true });
-}
-
-async function handleBookmarkPosition(req: VercelRequest, res: VercelResponse) {
-  const articleId = req.query.articleId as string;
-  const pageSize = Number(req.query.pageSize) || 100;
-  const includeDisabled = req.query.includeDisabled !== 'false';
-  if (!articleId) return res.status(400).json({ error: 'Missing articleId' });
-
-  const articleResult = await db.execute({ sql: `SELECT published_at FROM articles WHERE id = ?`, args: [articleId] });
-  if (articleResult.rows.length === 0) return res.status(200).json({ page: 1 });
-
-  const publishedAt = articleResult.rows[0].published_at as string;
-  const whereClause = includeDisabled ? '' : 'COALESCE(a.is_disabled, 0) = 0 AND';
-  const countResult = await db.execute({ sql: `SELECT COUNT(*) as count FROM articles a WHERE ${whereClause} a.published_at > ?`, args: [publishedAt] });
-  const position = countResult.rows[0].count as number;
-  return res.status(200).json({ page: Math.floor(position / pageSize) + 1 });
-}
-
-// ============ Series Handlers ============
-
-async function handleSeriesList(req: VercelRequest, res: VercelResponse) {
-  const result = await db.execute(`SELECT id, name, description, color, is_active, created_at, keywords, auto_add_enabled FROM news_series WHERE is_active = 1 ORDER BY created_at DESC`);
-  const series = result.rows.map((row) => {
-    const r = row as Record<string, unknown>;
-    return { id: r.id as number, name: r.name as string, description: r.description as string | null, color: r.color as string, isActive: r.is_active === 1, createdAt: r.created_at as string | null, keywords: r.keywords ? JSON.parse(r.keywords as string) : [], autoAddEnabled: r.auto_add_enabled === 1 };
-  });
-  return res.status(200).json(series);
-}
-
-async function handleSeriesCreate(req: VercelRequest, res: VercelResponse) {
-  const { name, description, color, keywords, autoAddEnabled } = req.body || {};
-  if (!name) return res.status(400).json({ error: 'Missing name' });
-  const result = await db.execute({ sql: `INSERT INTO news_series (name, description, color, keywords, auto_add_enabled) VALUES (?, ?, ?, ?, ?)`, args: [name, description || null, color || '#3b82f6', JSON.stringify(keywords || []), autoAddEnabled !== false ? 1 : 0] });
-  return res.status(200).json({ success: true, id: Number(result.lastInsertRowid) });
-}
-
-async function handleSeriesUpdate(req: VercelRequest, res: VercelResponse) {
-  const { seriesId, name, description, color, keywords, autoAddEnabled } = req.body || {};
-  if (!seriesId || !name) return res.status(400).json({ error: 'Missing required fields' });
-  await db.execute({ sql: `UPDATE news_series SET name = ?, description = ?, color = ?, keywords = ?, auto_add_enabled = ?, updated_at = datetime('now') WHERE id = ?`, args: [name, description || null, color || '#3b82f6', JSON.stringify(keywords || []), autoAddEnabled !== false ? 1 : 0, seriesId] });
-  return res.status(200).json({ success: true });
-}
-
-async function handleSeriesDelete(req: VercelRequest, res: VercelResponse) {
-  const { seriesId } = req.body || {};
-  if (!seriesId) return res.status(400).json({ error: 'Missing seriesId' });
-  await db.execute({ sql: `UPDATE articles SET series_id = NULL WHERE series_id = ?`, args: [seriesId] });
-  await db.execute({ sql: `DELETE FROM news_series WHERE id = ?`, args: [seriesId] });
-  return res.status(200).json({ success: true });
-}
-
-// ============ Review Handlers ============
-
-async function handleReviewList(req: VercelRequest, res: VercelResponse) {
-  const limit = Math.min(Number(req.query.limit) || 100, 200);
-  const offset = Number(req.query.offset) || 0;
-  const seriesId = req.query.seriesId as string;
-  const searchQuery = req.query.q as string;
-
-  const whereClauses: string[] = ["a.review_status = 'pending'"];
-  const args: (string | number)[] = [];
-
-  if (seriesId) { whereClauses.push('a.series_id = ?'); args.push(seriesId); }
-  if (searchQuery) { whereClauses.push('a.title LIKE ?'); args.push(`%${searchQuery}%`); }
-
-  args.push(limit, offset);
-  const result = await db.execute({
-    sql: `SELECT a.*, a.is_disabled, a.series_id, a.title_normalized, a.matched_keyword, ms.code as source_code, ms.name_zh as source_name, c.code as category_code, c.name_zh as category_name FROM articles a LEFT JOIN media_sources ms ON a.media_source_id = ms.id LEFT JOIN categories c ON a.category_id = c.id WHERE ${whereClauses.join(' AND ')} ORDER BY a.auto_classified_at DESC LIMIT ? OFFSET ?`,
-    args,
-  });
-
-  return res.status(200).json(result.rows.map((row) => {
-    const r = row as Record<string, unknown>;
-    const thumbnail = r.thumbnail_url as string | null;
-    return { ...dbToNewsItem(r as unknown as DBArticle), isDisabled: r.is_disabled === 1, seriesId: r.series_id as number | null, isSimilarDuplicate: false, similarToId: null, titleNormalized: r.title_normalized as string | null, hasThumbnail: thumbnail !== null && thumbnail.trim().length > 0, matchedKeyword: r.matched_keyword as string | null };
-  }));
-}
-
-async function handleReviewCount(req: VercelRequest, res: VercelResponse) {
-  const seriesId = req.query.seriesId as string;
-  const searchQuery = req.query.q as string;
-
-  const whereClauses: string[] = ["review_status = 'pending'"];
-  const args: (string | number)[] = [];
-
-  if (seriesId) { whereClauses.push('series_id = ?'); args.push(seriesId); }
-  if (searchQuery) { whereClauses.push('title LIKE ?'); args.push(`%${searchQuery}%`); }
-
-  const result = await db.execute({ sql: `SELECT COUNT(*) as count FROM articles WHERE ${whereClauses.join(' AND ')}`, args });
-  return res.status(200).json({ count: result.rows[0].count as number });
-}
-
-async function handleReviewApprove(req: VercelRequest, res: VercelResponse) {
-  const { articleId } = req.body || {};
-  if (!articleId) return res.status(400).json({ error: 'Missing articleId' });
-  await db.execute({ sql: `UPDATE articles SET review_status = 'approved' WHERE id = ?`, args: [articleId] });
-  return res.status(200).json({ success: true });
-}
-
-async function handleReviewReject(req: VercelRequest, res: VercelResponse) {
-  const { articleId } = req.body || {};
-  if (!articleId) return res.status(400).json({ error: 'Missing articleId' });
-  await db.execute({ sql: `UPDATE articles SET series_id = NULL, review_status = 'rejected' WHERE id = ?`, args: [articleId] });
-  return res.status(200).json({ success: true });
 }
