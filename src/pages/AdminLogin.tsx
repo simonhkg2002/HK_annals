@@ -25,7 +25,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onLogin }) => {
 
       if (user) {
         onLogin(user);
-        navigate('/admin/dashboard');
+        navigate('/portal_9f3k2m/console');
       } else {
         setError('帳號或密碼錯誤');
       }

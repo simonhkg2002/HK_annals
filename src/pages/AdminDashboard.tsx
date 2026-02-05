@@ -127,7 +127,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
   // 如果沒有登入，導向登入頁
   useEffect(() => {
     if (!user) {
-      navigate('/admin/login');
+      navigate('/portal_9f3k2m');
     }
   }, [user, navigate]);
 
@@ -311,7 +311,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
       if (item.isDisabled) {
         await enableNews(item.id);
       } else {
-        await disableNews(item.id, user.username);
+        await disableNews(item.id);
       }
       // 更新本地狀態
       setNews((prev) =>

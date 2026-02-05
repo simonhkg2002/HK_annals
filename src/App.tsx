@@ -11,7 +11,7 @@ import { ReviewQueue } from './pages/ReviewQueue';
 import { NewsDetail } from './pages/NewsDetail';
 import { AdminUser } from './lib/data';
 
-const ADMIN_STORAGE_KEY = 'hk_annals_admin';
+const ADMIN_STORAGE_KEY = 'hk_portal_session';
 
 function App() {
   const [adminUser, setAdminUser] = useState<AdminUser | null>(null);
@@ -48,31 +48,25 @@ function App() {
           <Route path="/media" element={<MediaPage />} />
           <Route path="/series" element={<SeriesBoard />} />
           <Route
-            path="/admin/login"
+            path="/portal_9f3k2m"
             element={
               adminUser ? (
-                <Navigate to="/admin/dashboard" replace />
+                <Navigate to="/portal_9f3k2m/console" replace />
               ) : (
                 <AdminLogin onLogin={handleLogin} />
               )
             }
           />
           <Route
-            path="/admin/dashboard"
+            path="/portal_9f3k2m/console"
             element={
               <AdminDashboard user={adminUser} onLogout={handleLogout} />
             }
           />
           <Route
-            path="/admin/review"
+            path="/portal_9f3k2m/review"
             element={
               <ReviewQueue />
-            }
-          />
-          <Route
-            path="/admin"
-            element={
-              <Navigate to={adminUser ? '/admin/dashboard' : '/admin/login'} replace />
             }
           />
           <Route path="*" element={<Navigate to="/" replace />} />

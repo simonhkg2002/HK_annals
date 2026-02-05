@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Menu, Search, Sun, Moon, Shield, X, Newspaper, GitBranch } from 'lucide-react';
+import { Menu, Search, Sun, Moon, X, Newspaper, GitBranch } from 'lucide-react';
 import { Button, Input } from './ui/primitives';
 import { cn } from '../lib/utils';
 
@@ -83,12 +83,6 @@ export const Layout: React.FC<LayoutProps> = ({ children, hideFooter }) => {
             <Button variant="ghost" size="icon" onClick={toggleTheme}>
               {isDark ? <Sun className="h-[1.2rem] w-[1.2rem]" /> : <Moon className="h-[1.2rem] w-[1.2rem]" />}
             </Button>
-            
-            <Link to="/admin">
-               <Button variant="ghost" size="icon" className={cn(isActive('/admin') && "text-brand-blue")}>
-                 <Shield className="h-[1.2rem] w-[1.2rem]" />
-               </Button>
-            </Link>
           </div>
         </div>
 
@@ -102,8 +96,8 @@ export const Layout: React.FC<LayoutProps> = ({ children, hideFooter }) => {
               </div>
               <nav className="flex flex-col space-y-3">
                 {navLinks.map((link) => (
-                  <Link 
-                    key={link.path} 
+                  <Link
+                    key={link.path}
                     to={link.path}
                     onClick={() => setIsMenuOpen(false)}
                     className={cn(
@@ -114,13 +108,6 @@ export const Layout: React.FC<LayoutProps> = ({ children, hideFooter }) => {
                     {link.name}
                   </Link>
                 ))}
-                <Link 
-                    to="/admin" 
-                    onClick={() => setIsMenuOpen(false)}
-                    className="text-lg font-medium py-2 text-foreground/80 flex items-center gap-2"
-                >
-                    管理後台 <Shield size={16}/>
-                </Link>
               </nav>
             </div>
           </div>

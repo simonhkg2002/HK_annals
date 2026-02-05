@@ -35,7 +35,7 @@ const PAGE_SIZE = 50;
 export const ReviewQueue: React.FC = () => {
   const navigate = useNavigate();
   const [user, setUser] = useState<AdminUser | null>(() => {
-    const stored = localStorage.getItem('hk_annals_admin');
+    const stored = localStorage.getItem('hk_portal_session');
     return stored ? JSON.parse(stored) : null;
   });
 
@@ -50,7 +50,7 @@ export const ReviewQueue: React.FC = () => {
   // 如果沒有登入，導向登入頁
   useEffect(() => {
     if (!user) {
-      navigate('/admin/login');
+      navigate('/portal_9f3k2m');
     }
   }, [user, navigate]);
 
@@ -83,9 +83,9 @@ export const ReviewQueue: React.FC = () => {
 
   // 處理登出
   const handleLogout = () => {
-    localStorage.removeItem('hk_annals_admin');
+    localStorage.removeItem('hk_portal_session');
     setUser(null);
-    navigate('/admin/login');
+    navigate('/portal_9f3k2m');
   };
 
   // 同意自動分類
@@ -129,7 +129,7 @@ export const ReviewQueue: React.FC = () => {
             <Badge variant="secondary">{totalCount} 則待審核</Badge>
           </div>
           <div className="flex items-center gap-4">
-            <Button variant="outline" size="sm" onClick={() => navigate('/admin/dashboard')}>
+            <Button variant="outline" size="sm" onClick={() => navigate('/portal_9f3k2m/console')}>
               返回管理頁
             </Button>
             <Button variant="outline" size="sm" onClick={handleLogout}>
