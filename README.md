@@ -64,22 +64,26 @@
 ### 首頁 - 新聞聚合
 *多源新聞即時更新，分類篩選一目了然*
 
-![首頁截圖](docs/screenshots/home.png)
+![首頁截圖1](docs/screenshots/homepage1.png)
+
+![首頁截圖2](docs/screenshots/homepage2.png)
 
 ### 系列追蹤板 - 偵探板風格
 *視覺化追蹤議題發展，釘線串連新聞脈絡*
 
-![系列追蹤板截圖](docs/screenshots/series-board.png)
+![系列追蹤板截圖](docs/screenshots/系列追蹤_巴士安全帶.png)
 
 ### 日報檔案
 *按日期瀏覽歷史新聞*
 
-![日報檔案截圖](docs/screenshots/daily-archive.png)
+![日報檔案截圖](docs/screenshots/日報檔案_回溯.png)
 
 ### 管理後台
 *新聞管理、系列建立、審核功能*
 
-![管理後台截圖](docs/screenshots/admin.png)
+![管理後台截圖1](docs/screenshots/後台.png)
+
+![管理後台截圖2](docs/screenshots/後台2.png)
 
 </div>
 
