@@ -37,13 +37,15 @@ function calculateSimpleSimilarity(t1: string, t2: string): number {
 
 // Simple JWT implementation (stateless - works with serverless)
 function base64UrlEncode(str: string): string {
-  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  // Use Buffer for Node.js compatibility with non-ASCII characters
+  const base64 = Buffer.from(str, 'utf-8').toString('base64');
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 function base64UrlDecode(str: string): string {
   str = str.replace(/-/g, '+').replace(/_/g, '/');
   while (str.length % 4) str += '=';
-  return atob(str);
+  return Buffer.from(str, 'base64').toString('utf-8');
 }
 
 async function createHmacSignature(data: string, secret: string): Promise<string> {
