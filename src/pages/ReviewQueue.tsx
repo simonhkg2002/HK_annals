@@ -35,7 +35,7 @@ const PAGE_SIZE = 50;
 export const ReviewQueue: React.FC = () => {
   const navigate = useNavigate();
   const [user, setUser] = useState<AdminUser | null>(() => {
-    const stored = localStorage.getItem('hk_portal_session');
+    const stored = localStorage.getItem('hk_portal_user');
     return stored ? JSON.parse(stored) : null;
   });
 
@@ -83,6 +83,7 @@ export const ReviewQueue: React.FC = () => {
 
   // 處理登出
   const handleLogout = () => {
+    localStorage.removeItem('hk_portal_user');
     localStorage.removeItem('hk_portal_session');
     setUser(null);
     navigate('/portal_9f3k2m');

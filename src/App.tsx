@@ -11,7 +11,7 @@ import { ReviewQueue } from './pages/ReviewQueue';
 import { NewsDetail } from './pages/NewsDetail';
 import { AdminUser } from './lib/data';
 
-const ADMIN_STORAGE_KEY = 'hk_portal_session';
+const ADMIN_STORAGE_KEY = 'hk_portal_user';
 
 function App() {
   const [adminUser, setAdminUser] = useState<AdminUser | null>(null);
@@ -36,6 +36,7 @@ function App() {
   const handleLogout = () => {
     setAdminUser(null);
     localStorage.removeItem(ADMIN_STORAGE_KEY);
+    localStorage.removeItem('hk_portal_session'); // Also clear the token
   };
 
   return (
