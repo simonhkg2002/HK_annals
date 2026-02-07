@@ -10,6 +10,9 @@ const SOURCE_MAP: Record<string, string> = { hk01: 'HK01', rthk: 'RTHK', mingpao
 const CATEGORY_MAP: Record<string, string> = { local: '港聞', society: '社會', politics: '政治', economy: '財經', international: '國際', china: '中國', sports: '體育', entertainment: '娛樂' };
 const SOURCE_PRIORITY: Record<string, number> = { HK01: 1, Yahoo: 2, RTHK: 3, '明報': 4 };
 
+// JWT Secret - 使用環境變數或 Turso auth token 的 hash 作為密鑰
+const JWT_SECRET = process.env.JWT_SECRET || process.env.TURSO_AUTH_TOKEN || 'fallback-secret-key';
+
 function dbToNewsItem(row: Record<string, unknown>) {
   return {
     id: String(row.id),
@@ -32,33 +35,49 @@ function calculateSimpleSimilarity(t1: string, t2: string): number {
   return common / Math.max(c1.size, c2.size);
 }
 
-// Session management
-const sessions = new Map<string, { userId: number; username: string; displayName: string; expiresAt: number }>();
-
-function generateToken(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let result = '';
-  for (let i = 0; i < 64; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
-  return result;
+// Simple JWT implementation (stateless - works with serverless)
+function base64UrlEncode(str: string): string {
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-function createSession(userId: number, username: string, displayName: string): string {
-  const token = generateToken();
-  sessions.set(token, { userId, username, displayName, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
-  return token;
+function base64UrlDecode(str: string): string {
+  str = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (str.length % 4) str += '=';
+  return atob(str);
+}
+
+async function createHmacSignature(data: string, secret: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(data));
+  return base64UrlEncode(String.fromCharCode(...new Uint8Array(signature)));
+}
+
+async function createJWT(payload: { userId: number; username: string; displayName: string }): Promise<string> {
+  const header = base64UrlEncode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const now = Math.floor(Date.now() / 1000);
+  const claims = base64UrlEncode(JSON.stringify({ ...payload, iat: now, exp: now + 86400 })); // 24 hours
+  const signature = await createHmacSignature(`${header}.${claims}`, JWT_SECRET);
+  return `${header}.${claims}.${signature}`;
+}
+
+async function verifyJWT(token: string): Promise<{ userId: number; username: string; displayName: string } | null> {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const [header, claims, signature] = parts;
+    const expectedSig = await createHmacSignature(`${header}.${claims}`, JWT_SECRET);
+    if (signature !== expectedSig) return null;
+    const payload = JSON.parse(base64UrlDecode(claims));
+    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null;
+    return { userId: payload.userId, username: payload.username, displayName: payload.displayName };
+  } catch { return null; }
 }
 
 function getToken(req: VercelRequest): string | null {
   const auth = req.headers.authorization;
   if (auth?.startsWith('Bearer ')) return auth.slice(7);
   return typeof req.query.token === 'string' ? req.query.token : null;
-}
-
-function validateSession(token: string | null) {
-  if (!token) return null;
-  const session = sessions.get(token);
-  if (!session || Date.now() > session.expiresAt) { if (session) sessions.delete(token); return null; }
-  return session;
 }
 
 async function hashPassword(password: string): Promise<string> {
@@ -81,24 +100,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
       const row = result.rows[0] as Record<string, unknown>;
       await db.execute({ sql: `UPDATE admin_users SET last_login_at = datetime('now') WHERE id = ?`, args: [row.id as number] });
-      const token = createSession(row.id as number, row.username as string, (row.display_name as string) || (row.username as string));
+      const token = await createJWT({ userId: row.id as number, username: row.username as string, displayName: (row.display_name as string) || (row.username as string) });
       return res.status(200).json({ token, user: { id: row.id, username: row.username, displayName: row.display_name || row.username, isActive: true } });
     }
 
     if (action === 'logout' && req.method === 'POST') {
-      const token = getToken(req);
-      if (token) sessions.delete(token);
+      // JWT is stateless, just return success (client will delete the token)
       return res.status(200).json({ success: true });
     }
 
     if (action === 'verify') {
-      const session = validateSession(getToken(req));
+      const session = await verifyJWT(getToken(req) || '');
       if (!session) return res.status(401).json({ error: 'Unauthorized' });
       return res.status(200).json({ user: { id: session.userId, username: session.username, displayName: session.displayName, isActive: true } });
     }
 
     // All other actions require auth
-    const session = validateSession(getToken(req));
+    const session = await verifyJWT(getToken(req) || '');
     if (!session) return res.status(401).json({ error: 'Unauthorized' });
 
     // News management
